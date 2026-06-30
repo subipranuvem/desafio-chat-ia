@@ -1,0 +1,27 @@
+# Binaries
+desafio-chat-ia
+*.exe
+*.out
+
+# Environment — never commit secrets
+.env
+
+# Test artifacts
+coverage.out
+coverage.html
+*.test
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Vendor
+vendor/
+TODO.md
+.claude
+.remember

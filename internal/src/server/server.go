@@ -1,0 +1,41 @@
+package server
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/llm"
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/repository"
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/handler"
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/middleware"
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/param"
+)
+
+type Config struct {
+	Addr     string
+	Registry *llm.Registry
+	Repo     repository.MessageRepository
+}
+
+func New(cfg Config) *http.Server {
+	r := chi.NewRouter()
+
+	r.Use(chimiddleware.Logger)
+	r.Use(chimiddleware.Recoverer)
+	r.Use(middleware.Gzip())
+	r.Use(middleware.ErrorHandler(middleware.DefaultErrors))
+
+	chat := handler.NewChatHandler(cfg.Registry, cfg.Repo)
+
+	r.Route("/chat", func(r chi.Router) {
+		r.With(middleware.ValidateSchema(chat.Schema())).
+			Post("/session/{"+param.SessionID+"}", chat.PostMessage)
+	})
+
+	return &http.Server{
+		Addr:    cfg.Addr,
+		Handler: r,
+	}
+}
