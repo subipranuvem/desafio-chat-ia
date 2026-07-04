@@ -17,6 +17,7 @@ type Config struct {
 	Addr     string
 	Registry *llm.Registry
 	Repo     repository.MessageRepository
+	Cache    repository.MessageCache
 }
 
 func New(cfg Config) *http.Server {
@@ -27,11 +28,13 @@ func New(cfg Config) *http.Server {
 	r.Use(middleware.Gzip())
 	r.Use(middleware.ErrorHandler(middleware.DefaultErrors))
 
-	chat := handler.NewChatHandler(cfg.Registry, cfg.Repo)
+	chat := handler.NewChatHandler(cfg.Registry, cfg.Repo, cfg.Cache)
 
 	r.Route("/chat", func(r chi.Router) {
 		r.With(middleware.ValidateSchema(chat.Schema())).
-			Post("/session/{"+param.SessionID+"}", chat.PostMessage)
+			Post("/session/{"+param.SessionID+"}", handler.Adapt(chat.PostMessage))
+
+		r.Get("/session/{"+param.SessionID+"}", handler.Adapt(chat.GetHistory))
 	})
 
 	return &http.Server{

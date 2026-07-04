@@ -6,10 +6,11 @@ import (
 )
 
 type Config struct {
-	PostgresDSN    string `env:"POSTGRES_DSN,required"`
-	RedisDSN       string `env:"REDIS_DSN,required"`
-	DeepSeekAPIKey string `env:"DEEPSEEK_API_KEY"`
-	GeminiAPIKey   string `env:"GEMINI_API_KEY"`
+	PostgresDSN                 string `env:"POSTGRES_DSN,required"`
+	RedisDSN                    string `env:"REDIS_DSN,required"`
+	DeepSeekAPIKey              string `env:"DEEPSEEK_API_KEY"`
+	GeminiAPIKey                string `env:"GEMINI_API_KEY"`
+	PingDatabaseIntervalInMillis int   `env:"PING_DATABASE_INTERVAL_IN_MILLIS" envDefault:"60000"`
 }
 
 func LoadConfig() (Config, error) {

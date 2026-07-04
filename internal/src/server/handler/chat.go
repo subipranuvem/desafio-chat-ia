@@ -43,46 +43,42 @@ type chatRequest struct {
 type ChatHandler struct {
 	registry *llm.Registry
 	repo     repository.MessageRepository
+	cache    repository.MessageCache
 }
 
-func NewChatHandler(registry *llm.Registry, repo repository.MessageRepository) *ChatHandler {
-	return &ChatHandler{registry: registry, repo: repo}
+func NewChatHandler(registry *llm.Registry, repo repository.MessageRepository, cache repository.MessageCache) *ChatHandler {
+	return &ChatHandler{registry: registry, repo: repo, cache: cache}
 }
 
 func (h *ChatHandler) Schema() string {
 	return chatPostSchema
 }
 
-func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) {
+func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, param.SessionID)
 
-	var req chatRequest
+	req := chatRequest{
+		Model:     param.DefaultModel,
+		MaxTokens: param.DefaultMaxTokens,
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "failed to decode body", http.StatusBadRequest)
-		return
-	}
-
-	if req.Model == "" {
-		req.Model = param.DefaultModel
-	}
-	if req.MaxTokens == 0 {
-		req.MaxTokens = param.DefaultMaxTokens
+		return HTTPError{Code: http.StatusBadRequest, Message: "failed to decode body"}
 	}
 
 	client, err := h.registry.For(req.Model)
 	if err != nil {
 		slog.Warn("model not available", "session_id", sessionID, "model", req.Model)
-		http.Error(w, fmt.Sprintf("model %q not available", req.Model), http.StatusBadRequest)
-		return
+		return HTTPError{Code: http.StatusBadRequest, Message: fmt.Sprintf("model %q not available", req.Model)}
 	}
-
-	slog.Info("chat request", "session_id", sessionID, "model", req.Model)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
+		return HTTPError{Code: http.StatusInternalServerError, Message: "streaming not supported"}
 	}
+
+	history := h.loadHistory(r, sessionID)
+
+	slog.Info("chat request", "session_id", sessionID, "model", req.Model, "history_len", len(history))
 
 	userMessage := model.Message{
 		Role:      model.RoleUser,
@@ -90,12 +86,14 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 
-	chat := model.Chat{
-		Messages: []model.Message{userMessage},
-	}
+	messages := make([]model.Message, 0, len(history)+2)
 	if req.SystemPrompt != "" {
-		chat.Messages = append([]model.Message{{Role: model.RoleSystem, Content: req.SystemPrompt}}, chat.Messages...)
+		messages = append(messages, model.Message{Role: model.RoleSystem, Content: req.SystemPrompt})
 	}
+	messages = append(messages, history...)
+	messages = append(messages, userMessage)
+
+	chat := model.Chat{Messages: messages}
 
 	var fullResponse strings.Builder
 	var doneChunk model.MessageChunk
@@ -138,15 +136,13 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) {
 
 	if streamErr != nil {
 		if !sseStarted {
-			// No chunks sent yet — response not committed, return JSON error.
 			slog.Error("stream failed before first chunk", "session_id", sessionID, "model", req.Model, "error", streamErr)
-			http.Error(w, streamErr.Error(), http.StatusBadGateway)
-			return
+			return HTTPError{Code: http.StatusBadGateway, Message: streamErr.Error()}
 		}
 		slog.Error("stream error mid-flight", "session_id", sessionID, "model", req.Model, "error", streamErr)
 		payload, _ := json.Marshal(map[string]string{"event": "error", "message": streamErr.Error()})
 		writeSSE(string(payload))
-		return
+		return nil
 	}
 
 	slog.Info("stream complete", "session_id", sessionID, "model", doneChunk.Model, "tokens", doneChunk.TokensUsed)
@@ -159,7 +155,35 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now(),
 	}
 
-	if err := h.repo.SaveMessages(r.Context(), sessionID, []model.Message{userMessage, assistantMessage}); err != nil {
-		slog.Error("failed to save messages", "session_id", sessionID, "error", err)
+	h.persist(r, sessionID, userMessage, assistantMessage)
+
+	return nil
+}
+
+// loadHistory fetches the sliding window context from Redis, falling back to Postgres on miss or error.
+func (h *ChatHandler) loadHistory(r *http.Request, sessionID string) []model.Message {
+	msgs, err := h.cache.GetRecentMessages(r.Context(), sessionID)
+	if err != nil {
+		slog.Warn("redis cache miss, falling back to postgres", "session_id", sessionID, "error", err)
+	}
+	if len(msgs) > 0 {
+		return msgs
+	}
+
+	msgs, err = h.repo.GetRecentMessages(r.Context(), sessionID, param.DefaultWindowSize)
+	if err != nil {
+		slog.Warn("failed to load history from postgres", "session_id", sessionID, "error", err)
+		return nil
+	}
+	return msgs
+}
+
+// persist saves messages to Postgres and updates the Redis sliding window.
+func (h *ChatHandler) persist(r *http.Request, sessionID string, msgs ...model.Message) {
+	if err := h.repo.SaveMessages(r.Context(), sessionID, msgs); err != nil {
+		slog.Error("failed to save messages to postgres", "session_id", sessionID, "error", err)
+	}
+	if err := h.cache.PushMessages(r.Context(), sessionID, msgs); err != nil {
+		slog.Error("failed to push messages to redis", "session_id", sessionID, "error", err)
 	}
 }

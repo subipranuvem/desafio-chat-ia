@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
 )
 
@@ -19,21 +21,15 @@ func TestRegistry_For(t *testing.T) {
 		r.Register("gpt-4o", &stubClient{})
 
 		c, err := r.For("gpt-4o")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if c == nil {
-			t.Fatal("expected client, got nil")
-		}
+		require.NoError(t, err)
+		require.NotNil(t, c)
 	})
 
 	t.Run("returns error for unknown model", func(t *testing.T) {
 		r := NewRegistry()
 
 		_, err := r.For("nonexistent-model")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		require.Error(t, err)
 	})
 
 	t.Run("register overwrites existing model", func(t *testing.T) {
@@ -45,11 +41,7 @@ func TestRegistry_For(t *testing.T) {
 		r.Register("model", second)
 
 		c, err := r.For("model")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if c != second {
-			t.Fatal("expected second client after overwrite")
-		}
+		require.NoError(t, err)
+		require.Equal(t, second, c)
 	})
 }

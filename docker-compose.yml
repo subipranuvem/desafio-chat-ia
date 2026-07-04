@@ -9,6 +9,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
 
   redis:
     image: redis:8.8.0-alpine
@@ -16,6 +21,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
 
 volumes:
   postgres_data:

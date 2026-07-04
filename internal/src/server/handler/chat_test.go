@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/llm"
 	llmmock "github.com/subipranuvem/desafio-chat-ia/internal/src/llm/mock"
@@ -56,19 +57,24 @@ func newRegistry(modelID string, client llm.LLMClient) *llm.Registry {
 	return r
 }
 
+// emptyHistory sets up both cache and repo to simulate a session with no prior history.
+func emptyHistory(cache *repomock.MessageCache, repo *repomock.MessageRepository) {
+	cache.On("GetRecentMessages", mock.Anything, mock.Anything).Return(nil, nil)
+	repo.On("GetRecentMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+}
+
 func TestChatHandler_PostMessage(t *testing.T) {
 	t.Run("returns 400 when model not registered", func(t *testing.T) {
 		repo := &repomock.MessageRepository{}
-		h := handler.NewChatHandler(llm.NewRegistry(), repo)
+		cache := &repomock.MessageCache{}
+		h := handler.NewChatHandler(llm.NewRegistry(), repo, cache)
 
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi", "model": "nonexistent"})
 		w := httptest.NewRecorder()
 
-		h.PostMessage(w, req)
+		handler.Adapt(h.PostMessage)(w, req)
 
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", w.Code)
-		}
+		require.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
 	t.Run("uses default model when model field is absent", func(t *testing.T) {
@@ -82,11 +88,15 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("SaveMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo)
+		cache := &repomock.MessageCache{}
+		emptyHistory(cache, repo)
+		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache)
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi"})
 		w := httptest.NewRecorder()
 
-		h.PostMessage(w, req)
+		handler.Adapt(h.PostMessage)(w, req)
 
 		client.AssertExpectations(t)
 	})
@@ -104,25 +114,23 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("SaveMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo)
+		cache := &repomock.MessageCache{}
+		emptyHistory(cache, repo)
+		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
-		h.PostMessage(w, req)
+		handler.Adapt(h.PostMessage)(w, req)
 
 		events := parseSSEEvents(w.Body.String())
-		if len(events) != 3 {
-			t.Fatalf("expected 3 SSE events, got %d: %s", len(events), w.Body.String())
-		}
-		if events[0]["event"] != "chunk" || events[0]["text"] != "hello" {
-			t.Fatalf("unexpected first event: %v", events[0])
-		}
-		if events[1]["event"] != "chunk" || events[1]["text"] != " world" {
-			t.Fatalf("unexpected second event: %v", events[1])
-		}
-		if events[2]["event"] != "done" {
-			t.Fatalf("expected done event, got: %v", events[2])
-		}
+		require.Len(t, events, 3, "body: %s", w.Body.String())
+		require.Equal(t, "chunk", events[0]["event"])
+		require.Equal(t, "hello", events[0]["text"])
+		require.Equal(t, "chunk", events[1]["event"])
+		require.Equal(t, " world", events[1]["text"])
+		require.Equal(t, "done", events[2]["event"])
 	})
 
 	t.Run("returns JSON error when SendMessage fails before first chunk", func(t *testing.T) {
@@ -131,19 +139,17 @@ func TestChatHandler_PostMessage(t *testing.T) {
 			Return(fmt.Errorf("upstream failure"))
 
 		repo := &repomock.MessageRepository{}
+		cache := &repomock.MessageCache{}
+		emptyHistory(cache, repo)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo)
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
-		h.PostMessage(w, req)
+		handler.Adapt(h.PostMessage)(w, req)
 
-		if w.Code != http.StatusBadGateway {
-			t.Fatalf("expected 502, got %d", w.Code)
-		}
-		if w.Header().Get("Content-Type") == "text/event-stream" {
-			t.Fatal("expected plain response, got SSE content-type")
-		}
+		require.Equal(t, http.StatusBadGateway, w.Code)
+		require.NotEqual(t, "text/event-stream", w.Header().Get("Content-Type"))
 	})
 
 	t.Run("streams SSE error event when SendMessage fails mid-stream", func(t *testing.T) {
@@ -156,29 +162,23 @@ func TestChatHandler_PostMessage(t *testing.T) {
 			Return(fmt.Errorf("connection reset"))
 
 		repo := &repomock.MessageRepository{}
+		cache := &repomock.MessageCache{}
+		emptyHistory(cache, repo)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo)
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
-		h.PostMessage(w, req)
+		handler.Adapt(h.PostMessage)(w, req)
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 (SSE already started), got %d", w.Code)
-		}
+		require.Equal(t, http.StatusOK, w.Code)
 		events := parseSSEEvents(w.Body.String())
-		if len(events) != 2 {
-			t.Fatalf("expected 2 SSE events (chunk + error), got %d: %s", len(events), w.Body.String())
-		}
-		if events[0]["event"] != "chunk" {
-			t.Fatalf("expected first event to be chunk, got: %v", events[0])
-		}
-		if events[1]["event"] != "error" {
-			t.Fatalf("expected second event to be error, got: %v", events[1])
-		}
+		require.Len(t, events, 2, "body: %s", w.Body.String())
+		require.Equal(t, "chunk", events[0]["event"])
+		require.Equal(t, "error", events[1]["event"])
 	})
 
-	t.Run("prepends system prompt as first message in chat", func(t *testing.T) {
+	t.Run("prepends system prompt before history and user message", func(t *testing.T) {
 		var capturedChat model.Chat
 
 		client := &llmmock.LLMClient{}
@@ -192,7 +192,11 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("SaveMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo)
+		cache := &repomock.MessageCache{}
+		emptyHistory(cache, repo)
+		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
 		req := newPostRequest(t, "s1", map[string]any{
 			"message":       "hi",
 			"model":         "gemini-2.5-flash",
@@ -200,17 +204,11 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		})
 		w := httptest.NewRecorder()
 
-		h.PostMessage(w, req)
+		handler.Adapt(h.PostMessage)(w, req)
 
-		if len(capturedChat.Messages) < 2 {
-			t.Fatalf("expected at least 2 messages in chat, got %d", len(capturedChat.Messages))
-		}
-		if capturedChat.Messages[0].Role != model.RoleSystem {
-			t.Fatalf("expected first message role %q, got %q", model.RoleSystem, capturedChat.Messages[0].Role)
-		}
-		if capturedChat.Messages[0].Content != "you are helpful" {
-			t.Fatalf("unexpected system prompt content: %q", capturedChat.Messages[0].Content)
-		}
+		require.GreaterOrEqual(t, len(capturedChat.Messages), 2)
+		require.Equal(t, model.RoleSystem, capturedChat.Messages[0].Role)
+		require.Equal(t, "you are helpful", capturedChat.Messages[0].Content)
 	})
 
 	t.Run("saves user and assistant messages with correct content", func(t *testing.T) {
@@ -229,21 +227,57 @@ func TestChatHandler_PostMessage(t *testing.T) {
 				savedMessages = args.Get(2).([]model.Message)
 			}).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo)
+		cache := &repomock.MessageCache{}
+		emptyHistory(cache, repo)
+		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
 		req := newPostRequest(t, "session-42", map[string]any{"message": "user input", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
-		h.PostMessage(w, req)
+		handler.Adapt(h.PostMessage)(w, req)
 
 		repo.AssertExpectations(t)
-		if len(savedMessages) != 2 {
-			t.Fatalf("expected 2 saved messages, got %d", len(savedMessages))
+		require.Len(t, savedMessages, 2)
+		require.Equal(t, model.RoleUser, savedMessages[0].Role)
+		require.Equal(t, "user input", savedMessages[0].Content)
+		require.Equal(t, model.RoleAssistant, savedMessages[1].Role)
+		require.Equal(t, "response", savedMessages[1].Content)
+	})
+
+	t.Run("includes cached history in LLM context", func(t *testing.T) {
+		var capturedChat model.Chat
+
+		client := &llmmock.LLMClient{}
+		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				capturedChat = args.Get(1).(model.Chat)
+				onChunk := args.Get(2).(func(model.MessageChunk) error)
+				onChunk(model.MessageChunk{Event: "done"})
+			}).Return(nil)
+
+		repo := &repomock.MessageRepository{}
+		repo.On("SaveMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		cachedHistory := []model.Message{
+			{Role: model.RoleUser, Content: "previous question"},
+			{Role: model.RoleAssistant, Content: "previous answer"},
 		}
-		if savedMessages[0].Role != model.RoleUser || savedMessages[0].Content != "user input" {
-			t.Fatalf("unexpected user message: %+v", savedMessages[0])
-		}
-		if savedMessages[1].Role != model.RoleAssistant || savedMessages[1].Content != "response" {
-			t.Fatalf("unexpected assistant message: %+v", savedMessages[1])
-		}
+		cache := &repomock.MessageCache{}
+		cache.On("GetRecentMessages", mock.Anything, "s1").Return(cachedHistory, nil)
+		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
+		req := newPostRequest(t, "s1", map[string]any{"message": "follow-up", "model": "gemini-2.5-flash"})
+		w := httptest.NewRecorder()
+
+		handler.Adapt(h.PostMessage)(w, req)
+
+		require.Len(t, capturedChat.Messages, 3)
+		require.Equal(t, model.RoleUser, capturedChat.Messages[0].Role)
+		require.Equal(t, "previous question", capturedChat.Messages[0].Content)
+		require.Equal(t, model.RoleAssistant, capturedChat.Messages[1].Role)
+		require.Equal(t, model.RoleUser, capturedChat.Messages[2].Role)
+		require.Equal(t, "follow-up", capturedChat.Messages[2].Content)
 	})
 }
