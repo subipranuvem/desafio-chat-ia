@@ -40,15 +40,17 @@ func (c *GeminiClient) SendMessage(ctx context.Context, chat model.Chat, onChunk
 		config.SystemInstruction = genai.NewContentFromText(sysPrompt, genai.RoleUser)
 	}
 
-	var totalTokens int64
+	var inputTokens, outputTokens int64
 
 	for resp, err := range c.client.Models.GenerateContentStream(ctx, c.modelID, contents, config) {
 		if err != nil {
 			return err
 		}
 
+		// UsageMetadata with complete counts is only present on the last streaming chunk.
 		if resp.UsageMetadata != nil {
-			totalTokens = int64(resp.UsageMetadata.TotalTokenCount)
+			inputTokens = int64(resp.UsageMetadata.PromptTokenCount)
+			outputTokens = int64(resp.UsageMetadata.CandidatesTokenCount)
 		}
 
 		for _, cand := range resp.Candidates {
@@ -66,9 +68,10 @@ func (c *GeminiClient) SendMessage(ctx context.Context, chat model.Chat, onChunk
 	}
 
 	return onChunk(model.MessageChunk{
-		Event:      "done",
-		Model:      c.modelID,
-		TokensUsed: totalTokens,
+		Event:        "done",
+		Model:        c.modelID,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
 	})
 }
 

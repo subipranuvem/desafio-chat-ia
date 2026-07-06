@@ -108,7 +108,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 				onChunk := args.Get(2).(func(model.MessageChunk) error)
 				onChunk(model.MessageChunk{Event: "chunk", Text: "hello"})
 				onChunk(model.MessageChunk{Event: "chunk", Text: " world"})
-				onChunk(model.MessageChunk{Event: "done", Model: "gemini-2.5-flash", TokensUsed: 10})
+				onChunk(model.MessageChunk{Event: "done", Model: "gemini-2.5-flash", InputTokens: 7, OutputTokens: 3})
 			}).Return(nil)
 
 		repo := &repomock.MessageRepository{}
@@ -217,7 +217,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 			Run(func(args mock.Arguments) {
 				onChunk := args.Get(2).(func(model.MessageChunk) error)
 				onChunk(model.MessageChunk{Event: "chunk", Text: "response"})
-				onChunk(model.MessageChunk{Event: "done", TokensUsed: 5})
+				onChunk(model.MessageChunk{Event: "done", InputTokens: 3, OutputTokens: 2})
 			}).Return(nil)
 
 		var savedMessages []model.Message
@@ -243,6 +243,70 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		require.Equal(t, "user input", savedMessages[0].Content)
 		require.Equal(t, model.RoleAssistant, savedMessages[1].Role)
 		require.Equal(t, "response", savedMessages[1].Content)
+	})
+
+	t.Run("returns 400 when system prompt sent for existing conversation", func(t *testing.T) {
+		client := &llmmock.LLMClient{}
+
+		existingHistory := []model.Message{
+			{Role: model.RoleSystem, Content: "original prompt"},
+			{Role: model.RoleUser, Content: "prev question"},
+			{Role: model.RoleAssistant, Content: "prev answer"},
+		}
+		cache := &repomock.MessageCache{}
+		cache.On("GetRecentMessages", mock.Anything, mock.Anything).Return(existingHistory, nil)
+
+		repo := &repomock.MessageRepository{}
+
+		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache)
+		req := newPostRequest(t, "s1", map[string]any{
+			"message":       "hi",
+			"model":         param.DefaultModel,
+			"system_prompt": "override attempt",
+		})
+		w := httptest.NewRecorder()
+
+		handler.Adapt(h.PostMessage)(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "cannot override system prompt")
+		client.AssertNotCalled(t, "SendMessage")
+	})
+
+	t.Run("saves system message on first turn of new conversation", func(t *testing.T) {
+		client := &llmmock.LLMClient{}
+		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				onChunk := args.Get(2).(func(model.MessageChunk) error)
+				onChunk(model.MessageChunk{Event: "done", Model: param.DefaultModel, InputTokens: 5, OutputTokens: 2})
+			}).Return(nil)
+
+		var savedMessages []model.Message
+		repo := &repomock.MessageRepository{}
+		repo.On("SaveMessages", mock.Anything, "s1", mock.Anything).
+			Run(func(args mock.Arguments) {
+				savedMessages = args.Get(2).([]model.Message)
+			}).Return(nil)
+
+		cache := &repomock.MessageCache{}
+		emptyHistory(cache, repo)
+		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache)
+		req := newPostRequest(t, "s1", map[string]any{
+			"message":       "hello",
+			"model":         param.DefaultModel,
+			"system_prompt": "you are a pirate",
+		})
+		w := httptest.NewRecorder()
+
+		handler.Adapt(h.PostMessage)(w, req)
+
+		require.Len(t, savedMessages, 3)
+		require.Equal(t, model.RoleSystem, savedMessages[0].Role)
+		require.Equal(t, "you are a pirate", savedMessages[0].Content)
+		require.Equal(t, model.RoleUser, savedMessages[1].Role)
+		require.Equal(t, model.RoleAssistant, savedMessages[2].Role)
 	})
 
 	t.Run("includes cached history in LLM context", func(t *testing.T) {

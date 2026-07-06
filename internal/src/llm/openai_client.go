@@ -62,9 +62,10 @@ func (c *OpenAIClient) SendMessage(ctx context.Context, chat model.Chat, onChunk
 	}
 
 	return onChunk(model.MessageChunk{
-		Event:      "done",
-		Model:      c.modelID,
-		TokensUsed: acc.Usage.TotalTokens,
+		Event:        "done",
+		Model:        c.modelID,
+		InputTokens:  acc.Usage.PromptTokens,
+		OutputTokens: acc.Usage.CompletionTokens,
 	})
 }
 

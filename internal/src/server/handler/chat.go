@@ -44,10 +44,13 @@ type ChatHandler struct {
 	registry *llm.Registry
 	repo     repository.MessageRepository
 	cache    repository.MessageCache
+	loader   ConversationLoader
 }
 
 func NewChatHandler(registry *llm.Registry, repo repository.MessageRepository, cache repository.MessageCache) *ChatHandler {
-	return &ChatHandler{registry: registry, repo: repo, cache: cache}
+	postgresLoader := NewPostgresLoader(repo, cache, nil)
+	redisLoader := NewRedisLoader(cache, postgresLoader)
+	return &ChatHandler{registry: registry, repo: repo, cache: cache, loader: redisLoader}
 }
 
 func (h *ChatHandler) Schema() string {
@@ -76,7 +79,15 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 		return HTTPError{Code: http.StatusInternalServerError, Message: "streaming not supported"}
 	}
 
-	history := h.loadHistory(r, sessionID)
+	history, found, err := h.loader.Load(r.Context(), sessionID)
+	if err != nil {
+		slog.Error("failed to load conversation history", "session_id", sessionID, "error", err)
+		return HTTPError{Code: http.StatusInternalServerError, Message: "failed to load conversation history"}
+	}
+
+	if found && req.SystemPrompt != "" {
+		return HTTPError{Code: http.StatusBadRequest, Message: "cannot override system prompt of existing conversation"}
+	}
 
 	slog.Info("chat request", "session_id", sessionID, "model", req.Model, "history_len", len(history))
 
@@ -86,9 +97,15 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 		CreatedAt: time.Now(),
 	}
 
-	messages := make([]model.Message, 0, len(history)+2)
-	if req.SystemPrompt != "" {
-		messages = append(messages, model.Message{Role: model.RoleSystem, Content: req.SystemPrompt})
+	var systemMsg *model.Message
+	if !found && req.SystemPrompt != "" {
+		msg := model.Message{Role: model.RoleSystem, Content: req.SystemPrompt, CreatedAt: time.Now()}
+		systemMsg = &msg
+	}
+
+	messages := make([]model.Message, 0, len(history)+3)
+	if systemMsg != nil {
+		messages = append(messages, *systemMsg)
 	}
 	messages = append(messages, history...)
 	messages = append(messages, userMessage)
@@ -125,8 +142,9 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 			payload, _ := json.Marshal(map[string]any{
 				"event": "done",
 				"metadata": map[string]any{
-					"tokens_used": chunk.TokensUsed,
-					"model":       chunk.Model,
+					"input_tokens":  chunk.InputTokens,
+					"output_tokens": chunk.OutputTokens,
+					"model":         chunk.Model,
 				},
 			})
 			writeSSE(string(payload))
@@ -145,37 +163,32 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 		return nil
 	}
 
-	slog.Info("stream complete", "session_id", sessionID, "model", doneChunk.Model, "tokens", doneChunk.TokensUsed)
+	slog.Info("stream complete", "session_id", sessionID, "model", doneChunk.Model,
+		"input_tokens", doneChunk.InputTokens, "output_tokens", doneChunk.OutputTokens)
+
+	userMessage.InputToken = doneChunk.InputTokens
 
 	assistantMessage := model.Message{
 		Role:        model.RoleAssistant,
 		Content:     fullResponse.String(),
-		InputToken:  doneChunk.TokensUsed,
-		OutputToken: doneChunk.TokensUsed,
+		OutputToken: doneChunk.OutputTokens,
 		CreatedAt:   time.Now(),
 	}
 
-	h.persist(r, sessionID, userMessage, assistantMessage)
+	persistMsgs := make([]model.Message, 0, 3)
+	if systemMsg != nil {
+		persistMsgs = append(persistMsgs, *systemMsg)
+	}
+	persistMsgs = append(persistMsgs, userMessage, assistantMessage)
+
+	// Persist runs synchronously before the handler returns, keeping the SSE connection
+	// open for a few extra milliseconds. The client already received the "done" event and
+	// is not waiting on anything useful — the overhead is negligible for typical DB writes.
+	// Alternatives (detached goroutine, in-process queue) close the connection faster but
+	// risk message loss if the process dies between the return and the write completing.
+	h.persist(r, sessionID, persistMsgs...)
 
 	return nil
-}
-
-// loadHistory fetches the sliding window context from Redis, falling back to Postgres on miss or error.
-func (h *ChatHandler) loadHistory(r *http.Request, sessionID string) []model.Message {
-	msgs, err := h.cache.GetRecentMessages(r.Context(), sessionID)
-	if err != nil {
-		slog.Warn("redis cache miss, falling back to postgres", "session_id", sessionID, "error", err)
-	}
-	if len(msgs) > 0 {
-		return msgs
-	}
-
-	msgs, err = h.repo.GetRecentMessages(r.Context(), sessionID, param.DefaultWindowSize)
-	if err != nil {
-		slog.Warn("failed to load history from postgres", "session_id", sessionID, "error", err)
-		return nil
-	}
-	return msgs
 }
 
 // persist saves messages to Postgres and updates the Redis sliding window.

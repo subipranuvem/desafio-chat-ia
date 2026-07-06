@@ -27,9 +27,10 @@ type Chat struct {
 }
 
 type MessageChunk struct {
-	Event      string `json:"event"`       // "chunk" | "done" | "error"
-	Text       string `json:"text"`        // populated on "chunk"
-	TokensUsed int64  `json:"tokens_used"` // populated on "done"
-	Model      string `json:"model"`       // populated on "done"
-	Err        error  `json:"error"`       // non-nil signals stream error
+	Event        string `json:"event"`         // "chunk" | "done" | "error"
+	Text         string `json:"text"`          // populated on "chunk"
+	InputTokens  int64  `json:"input_tokens"`  // prompt tokens, populated on "done"
+	OutputTokens int64  `json:"output_tokens"` // completion tokens, populated on "done"
+	Model        string `json:"model"`         // populated on "done"
+	Err          error  `json:"error"`         // non-nil signals stream error
 }

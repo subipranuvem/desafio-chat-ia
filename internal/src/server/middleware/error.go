@@ -20,6 +20,7 @@ var DefaultErrors = []ErrorEntry{
 	{Substring: "invalid json", StatusCode: http.StatusBadRequest, Message: "Request body is not valid JSON."},
 	{Substring: "failed to decode body", StatusCode: http.StatusBadRequest, Message: "Invalid request body."},
 	{Substring: "jsonschema", StatusCode: http.StatusUnprocessableEntity, Message: "Request validation failed."},
+	{Substring: "cannot override system prompt", StatusCode: http.StatusBadRequest, Message: "Cannot override the system prompt of an existing conversation."},
 	{Substring: "not available", StatusCode: http.StatusBadRequest, Message: "Requested model is not available."},
 	{Substring: "not registered", StatusCode: http.StatusBadRequest, Message: "Requested model is not registered."},
 	{Substring: "streaming not supported", StatusCode: http.StatusInternalServerError, Message: "Server does not support streaming."},

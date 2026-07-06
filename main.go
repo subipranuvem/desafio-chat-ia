@@ -12,6 +12,7 @@ import (
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/repository"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/server"
+	"github.com/subipranuvem/desafio-chat-ia/migrations"
 )
 
 func main() {
@@ -31,7 +32,17 @@ func main() {
 		os.Exit(1)
 	}
 	defer pg.Close()
+	if err := pg.Ping(ctx); err != nil {
+		slog.Error("postgres ping failed", "error", err)
+		os.Exit(1)
+	}
 	slog.Info("postgres connected")
+
+	if err := database.RunMigrations(pg.Pool(), migrations.FS); err != nil {
+		slog.Error("migrations failed", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("migrations applied")
 
 	rdb := database.NewRedisDB()
 	if err := rdb.Connect(ctx, cfg.RedisDSN); err != nil {
@@ -39,6 +50,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer rdb.Close()
+	if err := rdb.Ping(ctx); err != nil {
+		slog.Error("redis ping failed", "error", err)
+		os.Exit(1)
+	}
 	slog.Info("redis connected")
 
 	go func() {
