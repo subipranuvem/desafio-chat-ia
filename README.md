@@ -95,11 +95,13 @@ go test ./...
 
 ## Variáveis de ambiente
 
-| Variável | Descrição |
-|---|---|
-| `POSTGRES_DSN` | Connection string do PostgreSQL (obrigatória) |
-| `REDIS_DSN` | Connection string do Redis (obrigatória) |
-| `GEMINI_API_KEY` | API key do Google Gemini |
-| `DEEPSEEK_API_KEY` | API key do DeepSeek |
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `POSTGRES_DSN` | — | Connection string do PostgreSQL (obrigatória) |
+| `REDIS_DSN` | — | Connection string do Redis (obrigatória) |
+| `GEMINI_API_KEY` | — | API key do Google Gemini |
+| `DEEPSEEK_API_KEY` | — | API key do DeepSeek |
+| `PING_DATABASE_INTERVAL_IN_MILLIS` | `60000` | Intervalo entre health checks de Postgres e Redis |
+| `REDIS_SESSION_TTL_IN_MILLIS` | `180000` | TTL das sessões no Redis; renovado a cada mensagem enviada |
 
 Pelo menos uma API key de LLM deve estar configurada para o servidor processar mensagens.
