@@ -82,16 +82,75 @@ func TestRedisLoader(t *testing.T) {
 }
 
 func TestPostgresLoader(t *testing.T) {
-	t.Run("returns messages and warms redis on hit", func(t *testing.T) {
+	t.Run("returns messages on hit", func(t *testing.T) {
 		msgs := []model.Message{{Role: model.RoleUser, Content: "hello"}}
 
 		repo := &repomock.MessageRepository{}
 		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(msgs, nil)
 
+		loader := handler.NewPostgresLoader(repo, nil)
+		got, found, err := loader.Load(context.Background(), "s1")
+
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, msgs, got)
+	})
+
+	t.Run("returns not found when postgres miss and no next", func(t *testing.T) {
+		repo := &repomock.MessageRepository{}
+		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(nil, nil)
+
+		loader := handler.NewPostgresLoader(repo, nil)
+		_, found, err := loader.Load(context.Background(), "s1")
+
+		require.NoError(t, err)
+		require.False(t, found)
+	})
+
+	t.Run("delegates to next on postgres miss", func(t *testing.T) {
+		repo := &repomock.MessageRepository{}
+		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(nil, nil)
+
+		called := false
+		next := &stubLoader{load: func() ([]model.Message, bool, error) {
+			called = true
+			return nil, false, nil
+		}}
+
+		loader := handler.NewPostgresLoader(repo, next)
+		_, _, _ = loader.Load(context.Background(), "s1")
+
+		require.True(t, called)
+	})
+
+	t.Run("delegates to next on postgres error", func(t *testing.T) {
+		repo := &repomock.MessageRepository{}
+		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(nil, errors.New("db down"))
+
+		called := false
+		next := &stubLoader{load: func() ([]model.Message, bool, error) {
+			called = true
+			return nil, false, nil
+		}}
+
+		loader := handler.NewPostgresLoader(repo, next)
+		_, _, _ = loader.Load(context.Background(), "s1")
+
+		require.True(t, called)
+	})
+}
+
+func TestCacheWarmingLoader(t *testing.T) {
+	t.Run("warms cache on inner hit", func(t *testing.T) {
+		msgs := []model.Message{{Role: model.RoleUser, Content: "hello"}}
+
+		inner := &stubLoader{load: func() ([]model.Message, bool, error) {
+			return msgs, true, nil
+		}}
 		cache := &repomock.MessageCache{}
 		cache.On("PushMessages", mock.Anything, "s1", msgs).Return(nil)
 
-		loader := handler.NewPostgresLoader(repo, cache, nil)
+		loader := handler.NewCacheWarmingLoader(inner, cache)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -100,56 +159,34 @@ func TestPostgresLoader(t *testing.T) {
 		cache.AssertExpectations(t)
 	})
 
-	t.Run("returns not found when postgres miss and no next", func(t *testing.T) {
-		repo := &repomock.MessageRepository{}
-		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(nil, nil)
-
+	t.Run("does not warm cache on inner miss", func(t *testing.T) {
+		inner := &stubLoader{load: func() ([]model.Message, bool, error) {
+			return nil, false, nil
+		}}
 		cache := &repomock.MessageCache{}
 
-		loader := handler.NewPostgresLoader(repo, cache, nil)
-		_, found, err := loader.Load(context.Background(), "s1")
+		loader := handler.NewCacheWarmingLoader(inner, cache)
+		_, found, _ := loader.Load(context.Background(), "s1")
 
-		require.NoError(t, err)
 		require.False(t, found)
 		cache.AssertNotCalled(t, "PushMessages")
 	})
 
-	t.Run("delegates to next on postgres miss", func(t *testing.T) {
-		repo := &repomock.MessageRepository{}
-		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(nil, nil)
+	t.Run("returns data even when cache warming fails", func(t *testing.T) {
+		msgs := []model.Message{{Role: model.RoleUser, Content: "hello"}}
 
-		cache := &repomock.MessageCache{}
-
-		called := false
-		next := &stubLoader{load: func() ([]model.Message, bool, error) {
-			called = true
-			return nil, false, nil
+		inner := &stubLoader{load: func() ([]model.Message, bool, error) {
+			return msgs, true, nil
 		}}
-
-		loader := handler.NewPostgresLoader(repo, cache, next)
-		_, _, _ = loader.Load(context.Background(), "s1")
-
-		require.True(t, called)
-		cache.AssertNotCalled(t, "PushMessages")
-	})
-
-	t.Run("delegates to next on postgres error", func(t *testing.T) {
-		repo := &repomock.MessageRepository{}
-		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(nil, errors.New("db down"))
-
 		cache := &repomock.MessageCache{}
+		cache.On("PushMessages", mock.Anything, "s1", msgs).Return(errors.New("redis down"))
 
-		called := false
-		next := &stubLoader{load: func() ([]model.Message, bool, error) {
-			called = true
-			return nil, false, nil
-		}}
+		loader := handler.NewCacheWarmingLoader(inner, cache)
+		got, found, err := loader.Load(context.Background(), "s1")
 
-		loader := handler.NewPostgresLoader(repo, cache, next)
-		_, _, _ = loader.Load(context.Background(), "s1")
-
-		require.True(t, called)
-		cache.AssertNotCalled(t, "PushMessages")
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, msgs, got)
 	})
 }
 
@@ -167,7 +204,9 @@ func TestRedisToPostgresChain(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(msgs, nil)
 
-		loader := handler.NewRedisLoader(cache, handler.NewPostgresLoader(repo, cache, nil))
+		loader := handler.NewRedisLoader(cache,
+			handler.NewCacheWarmingLoader(handler.NewPostgresLoader(repo, nil), cache),
+		)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -184,7 +223,9 @@ func TestRedisToPostgresChain(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything).Return(nil, nil)
 
-		loader := handler.NewRedisLoader(cache, handler.NewPostgresLoader(repo, cache, nil))
+		loader := handler.NewRedisLoader(cache,
+			handler.NewCacheWarmingLoader(handler.NewPostgresLoader(repo, nil), cache),
+		)
 		_, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)

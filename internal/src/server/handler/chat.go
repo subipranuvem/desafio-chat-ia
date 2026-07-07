@@ -48,8 +48,8 @@ type ChatHandler struct {
 }
 
 func NewChatHandler(registry *llm.Registry, repo repository.MessageRepository, cache repository.MessageCache) *ChatHandler {
-	postgresLoader := NewPostgresLoader(repo, cache, nil)
-	redisLoader := NewRedisLoader(cache, postgresLoader)
+	warmingLoader := NewCacheWarmingLoader(NewPostgresLoader(repo, nil), cache)
+	redisLoader := NewRedisLoader(cache, warmingLoader)
 	return &ChatHandler{registry: registry, repo: repo, cache: cache, loader: redisLoader}
 }
 
@@ -74,11 +74,6 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 		return HTTPError{Code: http.StatusBadRequest, Message: fmt.Sprintf("model %q not available", req.Model)}
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		return HTTPError{Code: http.StatusInternalServerError, Message: "streaming not supported"}
-	}
-
 	history, found, err := h.loader.Load(r.Context(), sessionID)
 	if err != nil {
 		slog.Error("failed to load conversation history", "session_id", sessionID, "error", err)
@@ -87,6 +82,11 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 
 	if found && req.SystemPrompt != "" {
 		return HTTPError{Code: http.StatusBadRequest, Message: "cannot override system prompt of existing conversation"}
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return HTTPError{Code: http.StatusInternalServerError, Message: "streaming not supported"}
 	}
 
 	slog.Info("chat request", "session_id", sessionID, "model", req.Model, "history_len", len(history))

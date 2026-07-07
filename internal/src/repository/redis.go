@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/database"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
@@ -13,11 +14,12 @@ import (
 const windowSize = 20
 
 type redisMessageCache struct {
-	db database.RedisDB
+	db  database.RedisDB
+	ttl time.Duration
 }
 
-func NewRedisMessageCache(db database.RedisDB) MessageCache {
-	return &redisMessageCache{db: db}
+func NewRedisMessageCache(db database.RedisDB, ttl time.Duration) MessageCache {
+	return &redisMessageCache{db: db, ttl: ttl}
 }
 
 func sessionKey(sessionID string) string {
@@ -38,8 +40,11 @@ func (c *redisMessageCache) PushMessages(ctx context.Context, sessionID string, 
 		}
 	}
 
-	// Keep only the last windowSize messages.
-	return client.LTrim(ctx, key, -windowSize, -1).Err()
+	if err := client.LTrim(ctx, key, -windowSize, -1).Err(); err != nil {
+		return err
+	}
+
+	return client.Expire(ctx, key, c.ttl).Err()
 }
 
 func (c *redisMessageCache) GetRecentMessages(ctx context.Context, sessionID string) ([]model.Message, error) {

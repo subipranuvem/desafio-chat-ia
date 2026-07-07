@@ -120,7 +120,8 @@ func main() {
 	}
 
 	repo := repository.NewPostgresMessageRepository(pg)
-	cache := repository.NewRedisMessageCache(rdb)
+	sessionTTL := time.Duration(cfg.RedisSessionTTLInMillis) * time.Millisecond
+	cache := repository.NewRedisMessageCache(rdb, sessionTTL)
 
 	srv := server.New(server.Config{
 		Addr:     ":8000",

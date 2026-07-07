@@ -57,13 +57,12 @@ func (l *RedisLoader) Load(ctx context.Context, sessionID string) ([]model.Messa
 }
 
 type PostgresLoader struct {
-	repo  repository.MessageRepository
-	cache repository.MessageCache
-	next  ConversationLoader
+	repo repository.MessageRepository
+	next ConversationLoader
 }
 
-func NewPostgresLoader(repo repository.MessageRepository, cache repository.MessageCache, next ConversationLoader) *PostgresLoader {
-	return &PostgresLoader{repo: repo, cache: cache, next: chainNext(next)}
+func NewPostgresLoader(repo repository.MessageRepository, next ConversationLoader) *PostgresLoader {
+	return &PostgresLoader{repo: repo, next: chainNext(next)}
 }
 
 func (l *PostgresLoader) Load(ctx context.Context, sessionID string) ([]model.Message, bool, error) {
@@ -74,8 +73,27 @@ func (l *PostgresLoader) Load(ctx context.Context, sessionID string) ([]model.Me
 	if len(msgs) == 0 {
 		return l.next.Load(ctx, sessionID)
 	}
-	if warmErr := l.cache.PushMessages(ctx, sessionID, msgs); warmErr != nil {
-		slog.Warn("failed to warm redis after postgres load", "session_id", sessionID, "error", warmErr)
-	}
 	return msgs, true, nil
+}
+
+// CacheWarmingLoader wraps an inner loader and warms the cache on hit.
+// Redis unavailable → logs warning, returns data normally.
+// Uses decorator pattern to compose loaders.
+type CacheWarmingLoader struct {
+	inner ConversationLoader
+	cache repository.MessageCache
+}
+
+func NewCacheWarmingLoader(inner ConversationLoader, cache repository.MessageCache) *CacheWarmingLoader {
+	return &CacheWarmingLoader{inner: inner, cache: cache}
+}
+
+func (l *CacheWarmingLoader) Load(ctx context.Context, sessionID string) ([]model.Message, bool, error) {
+	msgs, found, err := l.inner.Load(ctx, sessionID)
+	if found && err == nil {
+		if warmErr := l.cache.PushMessages(ctx, sessionID, msgs); warmErr != nil {
+			slog.Warn("failed to warm redis after postgres load", "session_id", sessionID, "error", warmErr)
+		}
+	}
+	return msgs, found, err
 }
