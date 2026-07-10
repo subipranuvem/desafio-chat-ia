@@ -102,7 +102,7 @@ func ErrorHandler(entries []ErrorEntry) func(http.Handler) http.Handler {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(body.StatusCode)
-			json.NewEncoder(w).Encode(body) //nolint:errcheck
+			_ = json.NewEncoder(w).Encode(body) //nolint:errcheck,gosec
 		})
 	}
 }

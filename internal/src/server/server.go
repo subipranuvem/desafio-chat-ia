@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -37,7 +38,7 @@ func New(cfg Config) *http.Server {
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:gosec
 	})
 
 	r.Route("/chat", func(r chi.Router) {
@@ -50,7 +51,9 @@ func New(cfg Config) *http.Server {
 	})
 
 	return &http.Server{
-		Addr:    cfg.Addr,
-		Handler: r,
+		Addr:              cfg.Addr,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
 	}
 }

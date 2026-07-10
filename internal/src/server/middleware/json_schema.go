@@ -32,7 +32,7 @@ func ValidateSchema(schemaJSON string) func(http.Handler) http.Handler {
 			if err := sch.Validate(decoded); err != nil {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnprocessableEntity)
-				json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:gosec
 				return
 			}
 
