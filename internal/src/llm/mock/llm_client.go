@@ -16,3 +16,8 @@ func (m *LLMClient) SendMessage(ctx context.Context, chat model.Chat, onChunk fu
 	args := m.Called(ctx, chat, onChunk)
 	return args.Error(0)
 }
+
+func (m *LLMClient) CountTokens(ctx context.Context, message model.Message) (int64, error) {
+	args := m.Called(ctx, message)
+	return args.Get(0).(int64), args.Error(1)
+}

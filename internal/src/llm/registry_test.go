@@ -15,6 +15,10 @@ func (s *stubClient) SendMessage(_ context.Context, _ model.Chat, _ func(model.M
 	return nil
 }
 
+func (s *stubClient) CountTokens(_ context.Context, _ model.Message) (int64, error) {
+	return 0, nil
+}
+
 func TestRegistry_For(t *testing.T) {
 	t.Run("returns registered client", func(t *testing.T) {
 		r := NewRegistry()

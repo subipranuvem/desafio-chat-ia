@@ -3,9 +3,11 @@ package llm
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	tiktoken "github.com/pkoukk/tiktoken-go"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
 )
 
@@ -30,6 +32,18 @@ func NewOpenAIClient(apiKey, baseURL, modelID string) (*OpenAIClient, error) {
 		client:  openai.NewClient(opts...),
 		modelID: modelID,
 	}, nil
+}
+
+// CountTokens estimates token count using cl100k_base encoding (GPT-3.5/4 tokenizer).
+// Applies standard OpenAI chat message overhead: 4 tokens per message for role/separator markers.
+func (c *OpenAIClient) CountTokens(_ context.Context, message model.Message) (int64, error) {
+	enc, err := tiktoken.GetEncoding("cl100k_base")
+	if err != nil {
+		return 0, fmt.Errorf("tiktoken: %w", err)
+	}
+	total := 4 // per-message overhead: role marker + separators
+	total += len(enc.Encode(message.Content, nil, nil))
+	return int64(total), nil
 }
 
 func (c *OpenAIClient) SendMessage(ctx context.Context, chat model.Chat, onChunk func(model.MessageChunk) error) error {

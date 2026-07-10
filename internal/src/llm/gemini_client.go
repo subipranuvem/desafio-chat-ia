@@ -32,6 +32,18 @@ func NewGeminiClient(ctx context.Context, apiKey, modelID string) (*GeminiClient
 	return &GeminiClient{client: client, modelID: modelID}, nil
 }
 
+func (c *GeminiClient) CountTokens(ctx context.Context, message model.Message) (int64, error) {
+	contents, _ := buildGeminiContents(model.Chat{Messages: []model.Message{message}})
+	if len(contents) == 0 {
+		return 0, nil
+	}
+	result, err := c.client.Models.CountTokens(ctx, c.modelID, contents, nil)
+	if err != nil {
+		return 0, err
+	}
+	return int64(result.TotalTokens), nil
+}
+
 func (c *GeminiClient) SendMessage(ctx context.Context, chat model.Chat, onChunk func(model.MessageChunk) error) error {
 	contents, sysPrompt := buildGeminiContents(chat)
 
