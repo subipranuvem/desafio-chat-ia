@@ -50,7 +50,7 @@ Antes de escrever qualquer feature, precisamos de um esqueleto: roteamento, vali
 
 Middleware de JSON Schema para validação declarativa antes do handler ver o body.
 
-> **Lição:** Estrutura de pastas não é cosmética — é uma decisão de arquitetura. Separar por responsabilidade evita que handlers virem dumping grounds.
+> **Lição:** Estrutura de pastas não é cosmética — é uma decisão de arquitetura. Separar por responsabilidade evita que handlers virem dumping grounds (lixões).
 
 ---
 
@@ -186,9 +186,12 @@ Carregar o histórico do banco em toda request era lento e caro. Precisávamos d
 
 **Desafio 2 — cold start:** Na primeira request de uma sessão, o Redis não tem nada. Precisamos ir ao Postgres, buscar, e *aquecer* o cache — de forma transparente.
 
-**Solução: Chain of Responsibility com decorators**
+**Solução: Chain of Responsibility + Decorator**
 
-Cada loader implementa a mesma interface `ConversationLoader`. Eles se encadeiam: cada um tenta, delega ao próximo se não tiver, e o `CacheWarmingLoader` intercepta o retorno do Postgres para popular o Redis automaticamente.
+Dois patterns trabalhando juntos:
+
+- **Chain of Responsibility:** cada loader implementa a mesma interface `ConversationLoader` e delega ao próximo se não tiver a resposta.
+- **Decorator:** `CacheWarmingLoader` wraps o `PostgresLoader` sem modificá-lo — intercepta o retorno e popula o Redis como efeito colateral, transparente para quem chama.
 
 ```mermaid
 flowchart LR
@@ -419,6 +422,33 @@ Após o primeiro sinal, `stop()` cancela o handler. Um segundo SIGINT (impaciên
 `for range ticker.C` não verifica cancelamento — a goroutine ficaria viva tentando pingar um banco enquanto o processo está tentando fechar. Com `select { case <-ctx.Done(): return }` elas param imediatamente.
 
 > **Lição:** Graceful shutdown não é sobre o processo — é sobre as requisições em andamento. `srv.Shutdown` garante que os clientes recebam a resposta completa (ou pelo menos o evento de erro) antes da conexão fechar.
+
+---
+
+## Glossário
+
+| Termo | Significado |
+|-------|-------------|
+| **LLM** | Large Language Model — modelo de linguagem grande (ex: Gemini, GPT, DeepSeek). Recebe texto como entrada e gera texto como saída, token por token. |
+| **Token** | Unidade mínima de processamento de um LLM. Aproximadamente 4 caracteres em inglês ou 3 em português. Tanto entrada quanto saída consomem tokens. |
+| **Context Window** | Limite máximo de tokens que um LLM aceita em uma única chamada (entrada + saída). Cada modelo tem seu próprio limite. |
+| **Sliding Window** | Estratégia para respeitar o context window: ao invés de truncar do início, percorre o histórico de trás pra frente e descarta mensagens antigas até o custo caber no limite. |
+| **SSE** | Server-Sent Events — protocolo HTTP unidirecional onde o servidor envia eventos em tempo real para o cliente. Permite exibir tokens do LLM conforme chegam, sem esperar a resposta completa. |
+| **Graceful Shutdown** | Encerramento controlado do servidor: para de aceitar novas conexões, espera as requisições em andamento terminarem, depois fecha recursos (banco, cache). Evita perda de dados e respostas cortadas. |
+| **Strategy Pattern** | Pattern onde múltiplas implementações de uma mesma interface são intercambiáveis em tempo de execução. Usado aqui no `LLMRegistry`: Gemini e DeepSeek são strategies de `Client`. |
+| **Chain of Responsibility** | Pattern onde uma requisição percorre uma cadeia de handlers até ser resolvida. Usado no loader de histórico: Redis → CacheWarmingLoader → Postgres → Noop. |
+| **Decorator Pattern** | Pattern que adiciona comportamento a um objeto sem modificá-lo, wrappando-o. Usado no `CacheWarmingLoader`: decora o `PostgresLoader` para aquecer o Redis após cada carga. |
+| **Cache Warming** | Popular o cache (Redis) proativamente com dados buscados de uma fonte lenta (Postgres), para que a próxima leitura seja rápida sem precisar ir ao banco. |
+| **Cold Start** | Primeira requisição de uma sessão, quando o cache ainda está vazio. Exige busca no banco e aquecimento do cache. |
+| **TTL** | Time To Live — tempo de vida de uma entrada no cache. Após expirar, a entrada é removida automaticamente. Aqui: TTL do Redis é renovado a cada mensagem da sessão. |
+| **Idempotência** | Propriedade de uma operação que produz o mesmo resultado independentemente de quantas vezes é executada com os mesmos parâmetros. Reenviar o mesmo `system_prompt` é idempotente — não deve gerar erro. |
+| **Goroutine** | Unidade leve de concorrência do Go, gerenciada pelo runtime (não pelo SO). Permite rodar milhares de goroutines simultaneamente com baixo custo de memória. |
+| **Channel** | Mecanismo de comunicação entre goroutines no Go. Garante sincronização segura sem locks explícitos. Usado aqui para coletar o resultado do `CountTokens` em paralelo ao stream. |
+| **pgxpool** | Pool de conexões PostgreSQL para Go (`jackc/pgx`). Gerencia conexões abertas, reutiliza-as entre requests e controla o número máximo de conexões simultâneas. |
+| **CVE** | Common Vulnerabilities and Exposures — identificador público de vulnerabilidades de segurança. Ex: `GO-2026-5856` é uma CVE no pacote `crypto/tls` do Go. |
+| **Slowloris** | Ataque de negação de serviço que abre muitas conexões HTTP e as mantém abertas enviando headers lentamente, esgotando os workers do servidor. Mitigado com `ReadHeaderTimeout`. |
+| **gosec** | Ferramenta de análise estática de segurança para Go. Detecta padrões conhecidos de vulnerabilidade no código-fonte sem executá-lo. |
+| **trivy** | Scanner de vulnerabilidades que analisa dependências, imagens Docker e código em busca de CVEs conhecidas. |
 
 ---
 
