@@ -19,6 +19,7 @@ type Config struct {
 	Repo                repository.MessageRepository
 	Cache               repository.MessageCache
 	ContextWindowTokens int
+	Models              []handler.ModelInfo
 }
 
 func New(cfg Config) *http.Server {
@@ -30,8 +31,11 @@ func New(cfg Config) *http.Server {
 	r.Use(middleware.ErrorHandler(middleware.DefaultErrors))
 
 	chat := handler.NewChatHandler(cfg.Registry, cfg.Repo, cfg.Cache, cfg.ContextWindowTokens)
+	models := handler.NewModelsHandler(cfg.Models)
 
 	r.Route("/chat", func(r chi.Router) {
+		r.Get("/models", handler.Adapt(models.GetModels))
+
 		r.With(middleware.ValidateSchema(chat.Schema())).
 			Post("/session/{"+param.SessionID+"}", handler.Adapt(chat.PostMessage))
 
