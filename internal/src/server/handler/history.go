@@ -26,15 +26,15 @@ func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) error {
 	}
 	offset := parseQueryInt(r, param.QueryOffset, 0)
 
-	messages, total, err := h.repo.GetMessages(r.Context(), sessionID, limit, offset)
+	page, err := h.repo.GetMessages(r.Context(), sessionID, limit, offset)
 	if err != nil {
 		return HTTPError{Code: http.StatusInternalServerError, Message: "failed to fetch messages"}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(historyResponse{
-		Data:   messages,
-		Total:  total,
+		Data:   page.Messages,
+		Total:  page.Total,
 		Limit:  limit,
 		Offset: offset,
 	})

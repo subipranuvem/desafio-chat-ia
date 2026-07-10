@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -41,16 +42,22 @@ type chatRequest struct {
 }
 
 type ChatHandler struct {
-	registry *llm.Registry
-	repo     repository.MessageRepository
-	cache    repository.MessageCache
-	loader   ConversationLoader
+	registry            *llm.Registry
+	repo                repository.MessageRepository
+	cache               repository.MessageCache
+	loader              ConversationLoader
+	contextWindowTokens int
 }
 
-func NewChatHandler(registry *llm.Registry, repo repository.MessageRepository, cache repository.MessageCache) *ChatHandler {
-	warmingLoader := NewCacheWarmingLoader(NewPostgresLoader(repo, nil), cache)
+type countResult struct {
+	tokens int64
+	err    error
+}
+
+func NewChatHandler(registry *llm.Registry, repo repository.MessageRepository, cache repository.MessageCache, contextWindowTokens int) *ChatHandler {
+	warmingLoader := NewCacheWarmingLoader(NewPostgresLoader(repo, nil, contextWindowTokens), cache, contextWindowTokens)
 	redisLoader := NewRedisLoader(cache, warmingLoader)
-	return &ChatHandler{registry: registry, repo: repo, cache: cache, loader: redisLoader}
+	return &ChatHandler{registry: registry, repo: repo, cache: cache, loader: redisLoader, contextWindowTokens: contextWindowTokens}
 }
 
 func (h *ChatHandler) Schema() string {
@@ -65,28 +72,30 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 		MaxTokens: param.DefaultMaxTokens,
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return HTTPError{Code: http.StatusBadRequest, Message: "failed to decode body"}
+		return NewHTTPError(http.StatusBadRequest, "failed to decode body")
 	}
 
 	client, err := h.registry.For(req.Model)
 	if err != nil {
-		slog.Warn("model not available", "session_id", sessionID, "model", req.Model)
-		return HTTPError{Code: http.StatusBadRequest, Message: fmt.Sprintf("model %q not available", req.Model)}
+		return NewHTTPError(http.StatusBadRequest, fmt.Sprintf("model %q not available", req.Model)).
+			WithLogMessage(fmt.Sprintf("model not available session_id=%s model=%s", sessionID, req.Model))
 	}
 
 	history, found, err := h.loader.Load(r.Context(), sessionID)
 	if err != nil {
-		slog.Error("failed to load conversation history", "session_id", sessionID, "error", err)
-		return HTTPError{Code: http.StatusInternalServerError, Message: "failed to load conversation history"}
+		return NewHTTPError(http.StatusInternalServerError, "failed to load conversation history").
+			WithLogMessage(fmt.Sprintf("failed to load conversation history session_id=%s error=%s", sessionID, err))
 	}
 
 	if found && req.SystemPrompt != "" {
-		return HTTPError{Code: http.StatusBadRequest, Message: "cannot override system prompt of existing conversation"}
+		return NewHTTPError(http.StatusBadRequest, "cannot override system prompt of existing conversation")
 	}
 
-	flusher, ok := w.(http.Flusher)
+	history = buildWindow(history, h.contextWindowTokens)
+
+	sse, ok := newSSEWriter(w)
 	if !ok {
-		return HTTPError{Code: http.StatusInternalServerError, Message: "streaming not supported"}
+		return NewHTTPError(http.StatusInternalServerError, "streaming not supported")
 	}
 
 	slog.Info("chat request", "session_id", sessionID, "model", req.Model, "history_len", len(history))
@@ -97,76 +106,69 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 		CreatedAt: time.Now(),
 	}
 
+	tokenCh := make(chan countResult, 1)
+	go func() {
+		countCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		tokens, err := client.CountTokens(countCtx, userMessage)
+		tokenCh <- countResult{tokens, err}
+	}()
+
 	var systemMsg *model.Message
 	if !found && req.SystemPrompt != "" {
 		msg := model.Message{Role: model.RoleSystem, Content: req.SystemPrompt, CreatedAt: time.Now()}
 		systemMsg = &msg
 	}
 
-	messages := make([]model.Message, 0, len(history)+3)
+	messagesLen := len(history) + 2
+	if systemMsg != nil {
+		messagesLen++
+	}
+
+	messages := make([]model.Message, 0, messagesLen)
 	if systemMsg != nil {
 		messages = append(messages, *systemMsg)
 	}
 	messages = append(messages, history...)
 	messages = append(messages, userMessage)
 
-	chat := model.Chat{Messages: messages}
+	chat := model.Chat{Messages: messages, LastModelUsed: req.Model}
 
 	var fullResponse strings.Builder
 	var doneChunk model.MessageChunk
-	var sseStarted bool
-
-	// SSE headers are sent lazily on the first chunk so that pre-stream errors
-	// (auth failure, rate limit) can still be returned as plain JSON.
-	writeSSE := func(data string) {
-		if !sseStarted {
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			w.WriteHeader(http.StatusOK)
-			sseStarted = true
-		}
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
-	}
 
 	streamErr := client.SendMessage(r.Context(), chat, func(chunk model.MessageChunk) error {
 		switch chunk.Event {
-		case "chunk":
+		case sseEventChunk:
 			fullResponse.WriteString(chunk.Text)
-			payload, _ := json.Marshal(map[string]string{"event": "chunk", "text": chunk.Text})
-			writeSSE(string(payload))
-
-		case "done":
+			sse.WriteChunk(chunk.Text)
+		case sseEventDone:
 			doneChunk = chunk
-			payload, _ := json.Marshal(map[string]any{
-				"event": "done",
-				"metadata": map[string]any{
-					"input_tokens":  chunk.InputTokens,
-					"output_tokens": chunk.OutputTokens,
-					"model":         chunk.Model,
-				},
-			})
-			writeSSE(string(payload))
+			sse.WriteDone(chunk)
 		}
 		return nil
 	})
 
 	if streamErr != nil {
-		if !sseStarted {
-			slog.Error("stream failed before first chunk", "session_id", sessionID, "model", req.Model, "error", streamErr)
-			return HTTPError{Code: http.StatusBadGateway, Message: streamErr.Error()}
+		if !sse.Started() {
+			return NewHTTPError(http.StatusBadGateway, streamErr.Error()).
+				WithLogMessage(fmt.Sprintf("stream failed before first chunk session_id=%s model=%s error=%s", sessionID, req.Model, streamErr))
 		}
 		slog.Error("stream error mid-flight", "session_id", sessionID, "model", req.Model, "error", streamErr)
-		payload, _ := json.Marshal(map[string]string{"event": "error", "message": streamErr.Error()})
-		writeSSE(string(payload))
+		sse.WriteError(streamErr)
 		return nil
 	}
 
 	slog.Info("stream complete", "session_id", sessionID, "model", doneChunk.Model,
 		"input_tokens", doneChunk.InputTokens, "output_tokens", doneChunk.OutputTokens)
 
-	userMessage.InputToken = doneChunk.InputTokens
+	cr := <-tokenCh
+	if cr.err != nil {
+		slog.Warn("token count failed, falling back to estimation", "session_id", sessionID, "error", cr.err)
+		userMessage.InputToken = int64(len(req.Message) / 4)
+	} else {
+		userMessage.InputToken = cr.tokens
+	}
 
 	assistantMessage := model.Message{
 		Role:        model.RoleAssistant,
@@ -191,12 +193,22 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
-// persist saves messages to Postgres and updates the Redis sliding window.
+// persist saves messages to Postgres and replaces the Redis window.
+// Reads the current Redis state, appends new messages, applies buildWindow, then stores the result.
 func (h *ChatHandler) persist(r *http.Request, sessionID string, msgs ...model.Message) {
 	if err := h.repo.SaveMessages(r.Context(), sessionID, msgs); err != nil {
 		slog.Error("failed to save messages to postgres", "session_id", sessionID, "error", err)
 	}
-	if err := h.cache.PushMessages(r.Context(), sessionID, msgs); err != nil {
+
+	existing, err := h.cache.GetRecentMessages(r.Context(), sessionID)
+	if err != nil {
+		slog.Error("failed to get recent messages from redis", "session_id", sessionID, "error", err)
+		return
+	}
+
+	combined := append(existing, msgs...)
+	window := buildWindow(combined, h.contextWindowTokens)
+	if err := h.cache.PushMessages(r.Context(), sessionID, window); err != nil {
 		slog.Error("failed to push messages to redis", "session_id", sessionID, "error", err)
 	}
 }

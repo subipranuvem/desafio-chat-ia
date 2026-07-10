@@ -58,16 +58,21 @@ func newRegistry(modelID string, client llm.LLMClient) *llm.Registry {
 }
 
 // emptyHistory sets up both cache and repo to simulate a session with no prior history.
+// Also covers the additional cache.GetRecentMessages call inside persist().
 func emptyHistory(cache *repomock.MessageCache, repo *repomock.MessageRepository) {
 	cache.On("GetRecentMessages", mock.Anything, mock.Anything).Return(nil, nil)
-	repo.On("GetRecentMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+	repo.On("GetRecentMessages", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+}
+
+func setupCountTokens(client *llmmock.LLMClient) {
+	client.On("CountTokens", mock.Anything, mock.Anything).Return(int64(10), nil)
 }
 
 func TestChatHandler_PostMessage(t *testing.T) {
 	t.Run("returns 400 when model not registered", func(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		cache := &repomock.MessageCache{}
-		h := handler.NewChatHandler(llm.NewRegistry(), repo, cache)
+		h := handler.NewChatHandler(llm.NewRegistry(), repo, cache, testWindowTokens)
 
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi", "model": "nonexistent"})
 		w := httptest.NewRecorder()
@@ -79,6 +84,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 
 	t.Run("uses default model when model field is absent", func(t *testing.T) {
 		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
 		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
 				onChunk := args.Get(2).(func(model.MessageChunk) error)
@@ -92,7 +98,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		emptyHistory(cache, repo)
 		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache)
+		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi"})
 		w := httptest.NewRecorder()
 
@@ -103,6 +109,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 
 	t.Run("streams chunk and done events in order", func(t *testing.T) {
 		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
 		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
 				onChunk := args.Get(2).(func(model.MessageChunk) error)
@@ -118,7 +125,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		emptyHistory(cache, repo)
 		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
@@ -135,6 +142,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 
 	t.Run("returns JSON error when SendMessage fails before first chunk", func(t *testing.T) {
 		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
 		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
 			Return(fmt.Errorf("upstream failure"))
 
@@ -142,7 +150,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		cache := &repomock.MessageCache{}
 		emptyHistory(cache, repo)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
@@ -154,6 +162,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 
 	t.Run("streams SSE error event when SendMessage fails mid-stream", func(t *testing.T) {
 		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
 		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
 				onChunk := args.Get(2).(func(model.MessageChunk) error)
@@ -165,7 +174,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		cache := &repomock.MessageCache{}
 		emptyHistory(cache, repo)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "s1", map[string]any{"message": "hi", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
@@ -182,6 +191,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		var capturedChat model.Chat
 
 		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
 		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
 				capturedChat = args.Get(1).(model.Chat)
@@ -196,7 +206,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		emptyHistory(cache, repo)
 		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "s1", map[string]any{
 			"message":       "hi",
 			"model":         "gemini-2.5-flash",
@@ -213,6 +223,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 
 	t.Run("saves user and assistant messages with correct content", func(t *testing.T) {
 		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
 		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
 				onChunk := args.Get(2).(func(model.MessageChunk) error)
@@ -231,7 +242,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		emptyHistory(cache, repo)
 		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "session-42", map[string]any{"message": "user input", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
@@ -258,7 +269,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 
 		repo := &repomock.MessageRepository{}
 
-		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache)
+		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "s1", map[string]any{
 			"message":       "hi",
 			"model":         param.DefaultModel,
@@ -275,6 +286,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 
 	t.Run("saves system message on first turn of new conversation", func(t *testing.T) {
 		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
 		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
 				onChunk := args.Get(2).(func(model.MessageChunk) error)
@@ -292,7 +304,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		emptyHistory(cache, repo)
 		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache)
+		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "s1", map[string]any{
 			"message":       "hello",
 			"model":         param.DefaultModel,
@@ -313,6 +325,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		var capturedChat model.Chat
 
 		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
 		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
 				capturedChat = args.Get(1).(model.Chat)
@@ -331,7 +344,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		cache.On("GetRecentMessages", mock.Anything, "s1").Return(cachedHistory, nil)
 		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache)
+		h := handler.NewChatHandler(newRegistry("gemini-2.5-flash", client), repo, cache, testWindowTokens)
 		req := newPostRequest(t, "s1", map[string]any{"message": "follow-up", "model": "gemini-2.5-flash"})
 		w := httptest.NewRecorder()
 
