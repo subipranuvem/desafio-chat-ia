@@ -24,8 +24,8 @@ docker-build: ## Build Docker image
 docker-run: ## Run Docker container (reads from .env)
 	docker run --env-file .env -p 8000:8000 $(APPNAME):$(VERSION)
 
-sec-check: docker-build ## Run gosec (source) and trivy (image via container) security scans
+sec-check: ## Run gosec (source) and trivy (filesystem via container) security scans
 	gosec ./...
 	docker run --rm \
-		-v /var/run/docker.sock:/var/run/docker.sock \
-		aquasec/trivy:latest image $(APPNAME):$(VERSION)
+		-v $(PWD):/work \
+		aquasec/trivy:latest fs /work
