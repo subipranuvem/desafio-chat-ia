@@ -13,18 +13,6 @@ Resolução do desafio técnico de back-end da SubiPraNuvem. API de chat assisti
 | Cache / sessão | Redis |
 | Containerização | Docker · Docker Compose |
 
-## Arquitetura
-
-```
-internal/src/
-├── llm/            # Clientes LLM (interface + Gemini + OpenAI/DeepSeek) + registry
-├── model/          # Structs de domínio (Message, Chat, Config)
-├── repository/     # Interface de persistência (MessageRepository)
-└── server/
-    ├── handler/    # Handlers HTTP
-    ├── middleware/ # Gzip · Error handler · JSON Schema validation
-    └── param/      # Constantes e defaults
-```
 
 ## Endpoints
 
