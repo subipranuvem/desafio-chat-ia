@@ -28,7 +28,7 @@ docker compose up -d
 go run main.go
 ```
 
-API available at `http://localhost:8000`.
+API available at `http://localhost:8000` (or the port set via `PORT`).
 
 ## Makefile targets
 
@@ -54,6 +54,7 @@ make sec-check    # run gosec + trivy
 | `DEEPSEEK_API_KEY` | — | DeepSeek API key |
 | `PING_DATABASE_INTERVAL_IN_MILLIS` | `60000` | Interval between Postgres and Redis health checks (ms) |
 | `REDIS_SESSION_TTL_IN_MILLIS` | `7200000` | Session TTL in Redis; refreshed on every message (ms) |
+| `PORT` | `8000` | HTTP port the server listens on |
 | `CONTEXT_WINDOW_TOKENS` | `8000` | Maximum context window sent to the LLM (in tokens) |
 
 At least one LLM API key must be set for the server to process messages.

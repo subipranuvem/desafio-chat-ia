@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -76,8 +77,9 @@ func main() {
 	sessionTTL := time.Duration(cfg.RedisSessionTTLInMillis) * time.Millisecond
 	cache := repository.NewRedisMessageCache(rdb, sessionTTL)
 
+	addr := fmt.Sprintf(":%d", cfg.Port)
 	srv := server.New(server.Config{
-		Addr:                ":8000",
+		Addr:                addr,
 		Registry:            registry,
 		Repo:                repo,
 		Cache:               cache,
@@ -86,7 +88,7 @@ func main() {
 	})
 
 	go func() {
-		slog.Info("server listening", "addr", ":8000")
+		slog.Info("server listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
 			os.Exit(1)

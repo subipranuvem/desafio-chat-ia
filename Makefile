@@ -1,5 +1,6 @@
 APPNAME = desafio-chat-ia
 VERSION ?= dev
+PORT ?= 8000
 
 .PHONY: help run test test-race build docker-build docker-run gosec trivy sec-check
 
@@ -22,7 +23,7 @@ docker-build: ## Build Docker image
 	docker build -t $(APPNAME):$(VERSION) .
 
 docker-run: ## Run Docker container (reads from .env)
-	docker run --env-file .env -p 8000:8000 $(APPNAME):$(VERSION)
+	docker run --env-file .env -p $(PORT):$(PORT) $(APPNAME):$(VERSION)
 
 gosec: ## Run gosec static analysis on Go source
 	gosec ./...
