@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/aimodels"
@@ -25,7 +27,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	pg := database.NewPostgresDB()
 	if err := pg.Connect(ctx, cfg.PostgresDSN); err != nil {
@@ -57,42 +60,9 @@ func main() {
 	}
 	slog.Info("redis connected")
 
-	go func() {
-		ticker := time.NewTicker(time.Duration(cfg.PingDatabaseIntervalInMillis) * time.Millisecond)
-		defer ticker.Stop()
-		for range ticker.C {
-			if err := pg.Ping(ctx); err != nil {
-				slog.Error("postgres ping failed", "error", err)
-				continue
-			}
-			s := pg.Stats()
-			slog.Info("postgres pool stats",
-				"total_conns", s.TotalConns,
-				"acquired_conns", s.AcquiredConns,
-				"idle_conns", s.IdleConns,
-				"max_conns", s.MaxConns,
-			)
-		}
-	}()
-
-	go func() {
-		ticker := time.NewTicker(time.Duration(cfg.PingDatabaseIntervalInMillis) * time.Millisecond)
-		defer ticker.Stop()
-		for range ticker.C {
-			if err := rdb.Ping(ctx); err != nil {
-				slog.Error("redis ping failed", "error", err)
-				continue
-			}
-			s := rdb.Stats()
-			slog.Info("redis pool stats",
-				"total_conns", s.TotalConns,
-				"idle_conns", s.IdleConns,
-				"hits", s.Hits,
-				"misses", s.Misses,
-				"timeouts", s.Timeouts,
-			)
-		}
-	}()
+	interval := time.Duration(cfg.PingDatabaseIntervalInMillis) * time.Millisecond
+	database.PingPostgresEventually(ctx, pg, interval)
+	database.PingRedisEventually(ctx, rdb, interval)
 
 	registry := llm.NewRegistry()
 	availableModels, err := aimodels.Register(ctx, cfg, registry)
@@ -115,9 +85,23 @@ func main() {
 		Models:              availableModels,
 	})
 
-	slog.Info("server listening", "addr", ":8000")
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("server error", "error", err)
+	go func() {
+		slog.Info("server listening", "addr", ":8000")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-ctx.Done()
+	stop() // release signal handler so a second signal kills immediately
+
+	slog.Info("shutdown signal received, draining connections")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)
 	}
+	slog.Info("shutdown complete")
 }

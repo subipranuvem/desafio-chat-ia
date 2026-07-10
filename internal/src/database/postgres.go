@@ -3,7 +3,9 @@ package database
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -87,4 +89,31 @@ func (p *postgresDB) Stats() PostgresStats {
 		MaxConns:          s.MaxConns(),
 		ConstructingConns: s.ConstructingConns(),
 	}
+}
+
+// PingEventually pings the database on a fixed interval until ctx is cancelled.
+// Logs pool stats after each successful ping.
+func PingPostgresEventually(ctx context.Context, db PostgresDB, interval time.Duration) {
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := db.Ping(ctx); err != nil {
+					slog.Error("postgres ping failed", "error", err)
+					continue
+				}
+				s := db.Stats()
+				slog.Info("postgres pool stats",
+					"total_conns", s.TotalConns,
+					"acquired_conns", s.AcquiredConns,
+					"idle_conns", s.IdleConns,
+					"max_conns", s.MaxConns,
+				)
+			}
+		}
+	}()
 }

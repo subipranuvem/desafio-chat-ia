@@ -2,7 +2,9 @@ package database
 
 import (
 	"context"
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -88,4 +90,32 @@ func (r *redisDB) Stats() RedisStats {
 		Misses:     s.Misses,
 		Timeouts:   s.Timeouts,
 	}
+}
+
+// PingRedisEventually pings Redis on a fixed interval until ctx is cancelled.
+// Logs pool stats after each successful ping.
+func PingRedisEventually(ctx context.Context, db RedisDB, interval time.Duration) {
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := db.Ping(ctx); err != nil {
+					slog.Error("redis ping failed", "error", err)
+					continue
+				}
+				s := db.Stats()
+				slog.Info("redis pool stats",
+					"total_conns", s.TotalConns,
+					"idle_conns", s.IdleConns,
+					"hits", s.Hits,
+					"misses", s.Misses,
+					"timeouts", s.Timeouts,
+				)
+			}
+		}
+	}()
 }
