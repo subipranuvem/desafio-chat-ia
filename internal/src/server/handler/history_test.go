@@ -49,11 +49,13 @@ func TestChatHandler_GetHistory(t *testing.T) {
 
 		var resp map[string]any
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		require.InDelta(t, 2.0, resp["total"], 0)
-		require.InDelta(t, 20.0, resp["limit"], 0)
-		require.InDelta(t, 0.0, resp["offset"], 0)
-		data := resp["data"].([]any)
-		require.Len(t, data, 2)
+		require.Equal(t, "s1", resp["session_id"])
+		pg := resp["pagination"].(map[string]any)
+		require.InDelta(t, 20.0, pg["limit"], 0)
+		require.InDelta(t, 0.0, pg["offset"], 0)
+		require.InDelta(t, 2.0, pg["total_records"], 0)
+		messages := resp["messages"].([]any)
+		require.Len(t, messages, 2)
 
 		repo.AssertExpectations(t)
 	})
@@ -77,9 +79,10 @@ func TestChatHandler_GetHistory(t *testing.T) {
 
 		var resp map[string]any
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		require.InDelta(t, 10.0, resp["limit"], 0)
-		require.InDelta(t, 30.0, resp["offset"], 0)
-		require.InDelta(t, 50.0, resp["total"], 0)
+		pg := resp["pagination"].(map[string]any)
+		require.InDelta(t, 10.0, pg["limit"], 0)
+		require.InDelta(t, 30.0, pg["offset"], 0)
+		require.InDelta(t, 50.0, pg["total_records"], 0)
 
 		repo.AssertExpectations(t)
 	})

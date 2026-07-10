@@ -20,9 +20,8 @@ type chunkPayload struct {
 }
 
 type doneMetadata struct {
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
-	Model        string `json:"model"`
+	TokensUsed int64  `json:"tokens_used"`
+	Model      string `json:"model"`
 }
 
 type donePayload struct {
@@ -75,9 +74,8 @@ func (s *sseWriter) WriteDone(chunk model.MessageChunk) {
 	s.write(donePayload{
 		Event: sseEventDone,
 		Metadata: doneMetadata{
-			InputTokens:  chunk.InputTokens,
-			OutputTokens: chunk.OutputTokens,
-			Model:        chunk.Model,
+			TokensUsed: chunk.InputTokens + chunk.OutputTokens,
+			Model:      chunk.Model,
 		},
 	})
 }

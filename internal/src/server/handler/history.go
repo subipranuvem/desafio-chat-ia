@@ -7,14 +7,20 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/param"
 )
 
+type pagination struct {
+	Limit        int   `json:"limit"`
+	Offset       int   `json:"offset"`
+	TotalRecords int64 `json:"total_records"`
+}
+
 type historyResponse struct {
-	Data   any   `json:"data"`
-	Total  int64 `json:"total"`
-	Limit  int   `json:"limit"`
-	Offset int   `json:"offset"`
+	SessionID  string          `json:"session_id"`
+	Pagination pagination      `json:"pagination"`
+	Messages   []model.Message `json:"messages"`
 }
 
 func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) error {
@@ -28,15 +34,23 @@ func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) error {
 
 	page, err := h.repo.GetMessages(r.Context(), sessionID, limit, offset)
 	if err != nil {
-		return HTTPError{Code: http.StatusInternalServerError, Message: "failed to fetch messages"}
+		return NewHTTPError(http.StatusInternalServerError, "failed to fetch messages")
+	}
+
+	messages := page.Messages
+	if messages == nil {
+		messages = []model.Message{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(historyResponse{
-		Data:   page.Messages,
-		Total:  page.Total,
-		Limit:  limit,
-		Offset: offset,
+		SessionID: sessionID,
+		Pagination: pagination{
+			Limit:        limit,
+			Offset:       offset,
+			TotalRecords: page.Total,
+		},
+		Messages: messages,
 	})
 }
 
