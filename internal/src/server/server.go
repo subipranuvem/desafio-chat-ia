@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -26,13 +27,18 @@ type Config struct {
 func New(cfg Config) *http.Server {
 	r := chi.NewRouter()
 
-	r.Use(chimiddleware.Logger)
+	r.Use(middleware.RequestLogger)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(middleware.Gzip())
 	r.Use(middleware.ErrorHandler(middleware.DefaultErrors))
 
 	chat := handler.NewChatHandler(cfg.Registry, cfg.Repo, cfg.Cache, cfg.ContextWindowTokens)
 	models := handler.NewModelsHandler(cfg.Models)
+
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
 
 	r.Route("/chat", func(r chi.Router) {
 		r.Get("/models", handler.Adapt(models.GetModels))
