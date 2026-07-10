@@ -89,7 +89,16 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 	}
 
 	if found && req.SystemPrompt != "" {
-		return NewHTTPError(http.StatusBadRequest, "cannot override system prompt of existing conversation")
+		existing := ""
+		for _, m := range history {
+			if m.Role == model.RoleSystem {
+				existing = m.Content
+				break
+			}
+		}
+		if req.SystemPrompt != existing {
+			return NewHTTPError(http.StatusBadRequest, "cannot override system prompt of existing conversation")
+		}
 	}
 
 	history = session.BuildWindow(history, h.contextWindowTokens)

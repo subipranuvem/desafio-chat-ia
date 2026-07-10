@@ -258,7 +258,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		require.Equal(t, "response", savedMessages[1].Content)
 	})
 
-	t.Run("returns 400 when system prompt sent for existing conversation", func(t *testing.T) {
+	t.Run("returns 400 when different system prompt sent for existing conversation", func(t *testing.T) {
 		client := &llmmock.LLMClient{}
 
 		existingHistory := []model.Message{
@@ -275,7 +275,7 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		req := newPostRequest(t, "s1", map[string]any{
 			"message":       "hi",
 			"model":         param.DefaultModel,
-			"system_prompt": "override attempt",
+			"system_prompt": "different prompt — override attempt",
 		})
 		w := httptest.NewRecorder()
 
@@ -284,6 +284,41 @@ func TestChatHandler_PostMessage(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, w.Code)
 		require.Contains(t, w.Body.String(), "cannot override system prompt")
 		client.AssertNotCalled(t, "SendMessage")
+	})
+
+	t.Run("accepts same system prompt resent to existing conversation", func(t *testing.T) {
+		client := &llmmock.LLMClient{}
+		setupCountTokens(client)
+		client.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				onChunk := args.Get(2).(func(model.MessageChunk) error)
+				onChunk(model.MessageChunk{Event: "done", Model: param.DefaultModel})
+			}).Return(nil)
+
+		existingHistory := []model.Message{
+			{Role: model.RoleSystem, Content: "original prompt"},
+			{Role: model.RoleUser, Content: "prev question"},
+			{Role: model.RoleAssistant, Content: "prev answer"},
+		}
+		cache := &repomock.MessageCache{}
+		cache.On("GetRecentMessages", mock.Anything, mock.Anything).Return(existingHistory, nil)
+		cache.On("PushMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		repo := &repomock.MessageRepository{}
+		repo.On("SaveMessages", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		h := handler.NewChatHandler(newRegistry(param.DefaultModel, client), repo, cache, testWindowTokens)
+		req := newPostRequest(t, "s1", map[string]any{
+			"message":       "hi",
+			"model":         param.DefaultModel,
+			"system_prompt": "original prompt",
+		})
+		w := httptest.NewRecorder()
+
+		handler.Adapt(h.PostMessage)(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		client.AssertCalled(t, "SendMessage", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("saves system message on first turn of new conversation", func(t *testing.T) {
