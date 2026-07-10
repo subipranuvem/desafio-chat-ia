@@ -35,7 +35,7 @@ func (r *postgresMessageRepository) GetMessages(ctx context.Context, sessionID s
 		`SELECT id, role, content, input_token, output_token, created_at, COUNT(*) OVER() AS total
 		 FROM messages
 		 WHERE session_id = $1
-		 ORDER BY created_at ASC
+		 ORDER BY id ASC
 		 LIMIT $2 OFFSET $3`,
 		sessionID, limit, offset,
 	)
@@ -63,10 +63,10 @@ func (r *postgresMessageRepository) GetRecentMessages(ctx context.Context, sessi
 		     SELECT id, role, content, input_token, output_token, created_at
 		     FROM messages
 		     WHERE session_id = $1
-		     ORDER BY created_at DESC
+		     ORDER BY id DESC
 		     LIMIT $2 OFFSET $3
 		 ) sub
-		 ORDER BY created_at ASC`,
+		 ORDER BY id ASC`,
 		sessionID, limit, offset,
 	)
 	if err != nil {
