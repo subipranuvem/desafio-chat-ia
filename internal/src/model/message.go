@@ -31,6 +31,14 @@ type Chat struct {
 	TokensUsed    int64     `json:"tokens_used"`
 }
 
+type ModelInfo struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Provider      string `json:"provider"`
+	ContextWindow int    `json:"context_window"`
+	Description   string `json:"description"`
+}
+
 type MessageChunk struct {
 	Event        string `json:"event"`         // "chunk" | "done" | "error"
 	Text         string `json:"text"`          // populated on "chunk"

@@ -6,13 +6,12 @@ import (
 
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/llm"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
-	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/handler"
 )
 
 type modelDef struct {
 	id            string
 	provider      string
-	info          handler.ModelInfo
+	info          model.ModelInfo
 	clientFactory func() (llm.LLMClient, error)
 }
 
@@ -21,7 +20,7 @@ func catalog(ctx context.Context, cfg model.Config) []modelDef {
 		{
 			id:       "gemini-2.5-flash",
 			provider: "google",
-			info: handler.ModelInfo{
+			info: model.ModelInfo{
 				ID:            "gemini-2.5-flash",
 				Name:          "Gemini 2.5 Flash",
 				Provider:      "google",
@@ -35,7 +34,7 @@ func catalog(ctx context.Context, cfg model.Config) []modelDef {
 		{
 			id:       "gemini-3.5-flash",
 			provider: "google",
-			info: handler.ModelInfo{
+			info: model.ModelInfo{
 				ID:            "gemini-3.5-flash",
 				Name:          "Gemini 3.5 Flash",
 				Provider:      "google",
@@ -49,7 +48,7 @@ func catalog(ctx context.Context, cfg model.Config) []modelDef {
 		{
 			id:       "gemini-3.1-flash-lite",
 			provider: "google",
-			info: handler.ModelInfo{
+			info: model.ModelInfo{
 				ID:            "gemini-3.1-flash-lite",
 				Name:          "Gemini 3.1 Flash Lite",
 				Provider:      "google",
@@ -63,7 +62,7 @@ func catalog(ctx context.Context, cfg model.Config) []modelDef {
 		{
 			id:       "deepseek-v4-flash",
 			provider: "deepseek",
-			info: handler.ModelInfo{
+			info: model.ModelInfo{
 				ID:            "deepseek-v4-flash",
 				Name:          "DeepSeek V4 Flash",
 				Provider:      "deepseek",
@@ -77,7 +76,7 @@ func catalog(ctx context.Context, cfg model.Config) []modelDef {
 		{
 			id:       "deepseek-v4-pro",
 			provider: "deepseek",
-			info: handler.ModelInfo{
+			info: model.ModelInfo{
 				ID:            "deepseek-v4-pro",
 				Name:          "DeepSeek V4 Pro",
 				Provider:      "deepseek",
@@ -93,13 +92,13 @@ func catalog(ctx context.Context, cfg model.Config) []modelDef {
 
 // Register creates LLM clients for all models whose API key is present,
 // registers them in the registry, and returns the available model infos.
-func Register(ctx context.Context, cfg model.Config, registry *llm.Registry) ([]handler.ModelInfo, error) {
+func Register(ctx context.Context, cfg model.Config, registry *llm.Registry) ([]model.ModelInfo, error) {
 	missingKey := map[string]bool{
 		"google":   cfg.GeminiAPIKey == "",
 		"deepseek": cfg.DeepSeekAPIKey == "",
 	}
 
-	var available []handler.ModelInfo
+	var available []model.ModelInfo
 	for _, m := range catalog(ctx, cfg) {
 		if missingKey[m.provider] {
 			continue

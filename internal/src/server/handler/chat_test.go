@@ -22,6 +22,8 @@ import (
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/param"
 )
 
+const testWindowTokens = 8000
+
 func withSessionID(r *http.Request, id string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add(param.SessionID, id)

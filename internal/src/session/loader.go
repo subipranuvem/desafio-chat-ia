@@ -1,4 +1,4 @@
-package handler
+package session
 
 import (
 	"context"
@@ -113,7 +113,7 @@ func (l *PostgresLoader) Load(ctx context.Context, sessionID string) ([]model.Me
 }
 
 // CacheWarmingLoader wraps an inner loader and warms the cache on hit.
-// Applies buildWindow before pushing so Redis stores exactly the token-bounded slice.
+// Applies BuildWindow before pushing so Redis stores exactly the token-bounded slice.
 // Redis unavailable → logs warning, returns data normally.
 type CacheWarmingLoader struct {
 	inner               ConversationLoader
@@ -128,7 +128,7 @@ func NewCacheWarmingLoader(inner ConversationLoader, cache repository.MessageCac
 func (l *CacheWarmingLoader) Load(ctx context.Context, sessionID string) ([]model.Message, bool, error) {
 	msgs, found, err := l.inner.Load(ctx, sessionID)
 	if found && err == nil {
-		window := buildWindow(msgs, l.contextWindowTokens)
+		window := BuildWindow(msgs, l.contextWindowTokens)
 		if warmErr := l.cache.PushMessages(ctx, sessionID, window); warmErr != nil {
 			slog.Warn("failed to warm redis after postgres load", "session_id", sessionID, "error", warmErr)
 		}

@@ -15,6 +15,7 @@ import (
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/repository"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/param"
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/session"
 )
 
 const chatPostSchema = `{
@@ -45,7 +46,7 @@ type ChatHandler struct {
 	registry            *llm.Registry
 	repo                repository.MessageRepository
 	cache               repository.MessageCache
-	loader              ConversationLoader
+	loader              session.ConversationLoader
 	contextWindowTokens int
 }
 
@@ -55,8 +56,8 @@ type countResult struct {
 }
 
 func NewChatHandler(registry *llm.Registry, repo repository.MessageRepository, cache repository.MessageCache, contextWindowTokens int) *ChatHandler {
-	warmingLoader := NewCacheWarmingLoader(NewPostgresLoader(repo, nil, contextWindowTokens), cache, contextWindowTokens)
-	redisLoader := NewRedisLoader(cache, warmingLoader)
+	warmingLoader := session.NewCacheWarmingLoader(session.NewPostgresLoader(repo, nil, contextWindowTokens), cache, contextWindowTokens)
+	redisLoader := session.NewRedisLoader(cache, warmingLoader)
 	return &ChatHandler{registry: registry, repo: repo, cache: cache, loader: redisLoader, contextWindowTokens: contextWindowTokens}
 }
 
@@ -91,7 +92,7 @@ func (h *ChatHandler) PostMessage(w http.ResponseWriter, r *http.Request) error 
 		return NewHTTPError(http.StatusBadRequest, "cannot override system prompt of existing conversation")
 	}
 
-	history = buildWindow(history, h.contextWindowTokens)
+	history = session.BuildWindow(history, h.contextWindowTokens)
 
 	sse, ok := newSSEWriter(w)
 	if !ok {
@@ -207,7 +208,7 @@ func (h *ChatHandler) persist(r *http.Request, sessionID string, msgs ...model.M
 	}
 
 	combined := append(existing, msgs...)
-	window := buildWindow(combined, h.contextWindowTokens)
+	window := session.BuildWindow(combined, h.contextWindowTokens)
 	if err := h.cache.PushMessages(r.Context(), sessionID, window); err != nil {
 		slog.Error("failed to push messages to redis", "session_id", sessionID, "error", err)
 	}

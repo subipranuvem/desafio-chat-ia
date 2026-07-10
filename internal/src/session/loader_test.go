@@ -1,4 +1,4 @@
-package handler_test
+package session_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
 	repomock "github.com/subipranuvem/desafio-chat-ia/internal/src/repository/mock"
-	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/handler"
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/session"
 )
 
 const testWindowTokens = 8000
@@ -30,7 +30,7 @@ func TestRedisLoader(t *testing.T) {
 		cache := &repomock.MessageCache{}
 		cache.On("GetRecentMessages", mock.Anything, "s1").Return(msgs, nil)
 
-		loader := handler.NewRedisLoader(cache, nil)
+		loader := session.NewRedisLoader(cache, nil)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -43,7 +43,7 @@ func TestRedisLoader(t *testing.T) {
 		cache := &repomock.MessageCache{}
 		cache.On("GetRecentMessages", mock.Anything, "s1").Return(nil, nil)
 
-		loader := handler.NewRedisLoader(cache, nil)
+		loader := session.NewRedisLoader(cache, nil)
 		_, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestRedisLoader(t *testing.T) {
 			return nextMsgs, true, nil
 		}}
 
-		loader := handler.NewRedisLoader(cache, next)
+		loader := session.NewRedisLoader(cache, next)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestRedisLoader(t *testing.T) {
 			return nil, false, nil
 		}}
 
-		loader := handler.NewRedisLoader(cache, next)
+		loader := session.NewRedisLoader(cache, next)
 		_, _, _ = loader.Load(context.Background(), "s1")
 
 		require.True(t, called)
@@ -91,7 +91,7 @@ func TestPostgresLoader(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything, mock.Anything).Return(msgs, nil)
 
-		loader := handler.NewPostgresLoader(repo, nil, testWindowTokens)
+		loader := session.NewPostgresLoader(repo, nil, testWindowTokens)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestPostgresLoader(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything, mock.Anything).Return(nil, nil)
 
-		loader := handler.NewPostgresLoader(repo, nil, testWindowTokens)
+		loader := session.NewPostgresLoader(repo, nil, testWindowTokens)
 		_, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestPostgresLoader(t *testing.T) {
 			return nil, false, nil
 		}}
 
-		loader := handler.NewPostgresLoader(repo, next, testWindowTokens)
+		loader := session.NewPostgresLoader(repo, next, testWindowTokens)
 		_, _, _ = loader.Load(context.Background(), "s1")
 
 		require.True(t, called)
@@ -136,7 +136,7 @@ func TestPostgresLoader(t *testing.T) {
 			return nil, false, nil
 		}}
 
-		loader := handler.NewPostgresLoader(repo, next, testWindowTokens)
+		loader := session.NewPostgresLoader(repo, next, testWindowTokens)
 		_, _, _ = loader.Load(context.Background(), "s1")
 
 		require.True(t, called)
@@ -153,19 +153,17 @@ func TestPostgresLoader(t *testing.T) {
 		repo.On("GetRecentMessages", mock.Anything, "s1", 50, 0).Return(page1, nil)
 		repo.On("GetRecentMessages", mock.Anything, "s1", 50, 50).Return(page2, nil)
 
-		loader := handler.NewPostgresLoader(repo, nil, testWindowTokens)
+		loader := session.NewPostgresLoader(repo, nil, testWindowTokens)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
 		require.True(t, found)
-		// page2 (older) prepended to page1 (newer)
 		require.Len(t, got, 51)
 		require.Equal(t, page2[0], got[0])
 		repo.AssertExpectations(t)
 	})
 
 	t.Run("stops pagination when token budget satisfied", func(t *testing.T) {
-		// Each message costs 200 tokens; budget is 300 → page 0 (200 tokens) not enough, page 1 (400 total) stops.
 		largePage := make([]model.Message, 50)
 		for i := range largePage {
 			largePage[i] = model.Message{Role: model.RoleUser, InputToken: 4, OutputToken: 0}
@@ -174,13 +172,12 @@ func TestPostgresLoader(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("GetRecentMessages", mock.Anything, "s1", 50, 0).Return(largePage, nil)
 
-		loader := handler.NewPostgresLoader(repo, nil, 100)
+		loader := session.NewPostgresLoader(repo, nil, 100)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
 		require.True(t, found)
 		require.Len(t, got, 50)
-		// Only one page fetched — budget satisfied (50*4=200 >= 100)
 		repo.AssertNumberOfCalls(t, "GetRecentMessages", 1)
 	})
 }
@@ -195,7 +192,7 @@ func TestCacheWarmingLoader(t *testing.T) {
 		cache := &repomock.MessageCache{}
 		cache.On("PushMessages", mock.Anything, "s1", msgs).Return(nil)
 
-		loader := handler.NewCacheWarmingLoader(inner, cache, testWindowTokens)
+		loader := session.NewCacheWarmingLoader(inner, cache, testWindowTokens)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -210,7 +207,7 @@ func TestCacheWarmingLoader(t *testing.T) {
 		}}
 		cache := &repomock.MessageCache{}
 
-		loader := handler.NewCacheWarmingLoader(inner, cache, testWindowTokens)
+		loader := session.NewCacheWarmingLoader(inner, cache, testWindowTokens)
 		_, found, _ := loader.Load(context.Background(), "s1")
 
 		require.False(t, found)
@@ -226,7 +223,7 @@ func TestCacheWarmingLoader(t *testing.T) {
 		cache := &repomock.MessageCache{}
 		cache.On("PushMessages", mock.Anything, "s1", msgs).Return(errors.New("redis down"))
 
-		loader := handler.NewCacheWarmingLoader(inner, cache, testWindowTokens)
+		loader := session.NewCacheWarmingLoader(inner, cache, testWindowTokens)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -234,8 +231,7 @@ func TestCacheWarmingLoader(t *testing.T) {
 		require.Equal(t, msgs, got)
 	})
 
-	t.Run("applies buildWindow before warming cache", func(t *testing.T) {
-		// Each message: 60 chars → 15 tokens (len/4); budget=20 → only newest fits
+	t.Run("applies BuildWindow before warming cache", func(t *testing.T) {
 		longContent := strings.Repeat("x", 60)
 		old := model.Message{Role: model.RoleUser, Content: longContent}
 		recent := model.Message{Role: model.RoleAssistant, Content: longContent}
@@ -248,7 +244,7 @@ func TestCacheWarmingLoader(t *testing.T) {
 		cache := &repomock.MessageCache{}
 		cache.On("PushMessages", mock.Anything, "s1", window).Return(nil)
 
-		loader := handler.NewCacheWarmingLoader(inner, cache, 20)
+		loader := session.NewCacheWarmingLoader(inner, cache, 20)
 		got, found, err := loader.Load(context.Background(), "s1")
 
 		require.NoError(t, err)
@@ -272,8 +268,8 @@ func TestRedisToPostgresChain(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything, mock.Anything).Return(msgs, nil)
 
-		loader := handler.NewRedisLoader(cache,
-			handler.NewCacheWarmingLoader(handler.NewPostgresLoader(repo, nil, testWindowTokens), cache, testWindowTokens),
+		loader := session.NewRedisLoader(cache,
+			session.NewCacheWarmingLoader(session.NewPostgresLoader(repo, nil, testWindowTokens), cache, testWindowTokens),
 		)
 		got, found, err := loader.Load(context.Background(), "s1")
 
@@ -291,8 +287,8 @@ func TestRedisToPostgresChain(t *testing.T) {
 		repo := &repomock.MessageRepository{}
 		repo.On("GetRecentMessages", mock.Anything, "s1", mock.Anything, mock.Anything).Return(nil, nil)
 
-		loader := handler.NewRedisLoader(cache,
-			handler.NewCacheWarmingLoader(handler.NewPostgresLoader(repo, nil, testWindowTokens), cache, testWindowTokens),
+		loader := session.NewRedisLoader(cache,
+			session.NewCacheWarmingLoader(session.NewPostgresLoader(repo, nil, testWindowTokens), cache, testWindowTokens),
 		)
 		_, found, err := loader.Load(context.Background(), "s1")
 

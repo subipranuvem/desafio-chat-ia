@@ -7,6 +7,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/llm"
+	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/repository"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/handler"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/server/middleware"
@@ -19,7 +20,7 @@ type Config struct {
 	Repo                repository.MessageRepository
 	Cache               repository.MessageCache
 	ContextWindowTokens int
-	Models              []handler.ModelInfo
+	Models              []model.ModelInfo
 }
 
 func New(cfg Config) *http.Server {
