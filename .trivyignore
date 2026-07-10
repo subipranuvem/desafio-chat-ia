@@ -1,0 +1,5 @@
+# GO-2026-5932: golang.org/x/crypto/openpgp is unmaintained and unsafe by design.
+# We do not use the openpgp subpackage. This is a transitive dependency pulled in
+# by cloud.google.com/go, golang-migrate, openai-go, and others. No fixed version
+# exists — suppressed after triage.
+GO-2026-5932
