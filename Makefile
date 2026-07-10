@@ -1,7 +1,7 @@
 APPNAME = desafio-chat-ia
 VERSION ?= dev
 
-.PHONY: help run test test-race build docker-build docker-run
+.PHONY: help run test test-race build docker-build docker-run sec-check
 
 help: ## Display this help screen
 	@grep -h -E '^[a-zA-Z_0-9-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -23,3 +23,7 @@ docker-build: ## Build Docker image
 
 docker-run: ## Run Docker container (reads from .env)
 	docker run --env-file .env -p 8000:8000 $(APPNAME):$(VERSION)
+
+sec-check: docker-build ## Run gosec (source) and trivy (image) security scans
+	gosec ./...
+	trivy image $(APPNAME):$(VERSION)
