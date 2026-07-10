@@ -19,6 +19,11 @@ type Message struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+type MessageQuery struct {
+	Messages []Message `json:"messages"`
+	Total    int64     `json:"total"`
+}
+
 type Chat struct {
 	SessionID     int64     `json:"session_id"`
 	Messages      []Message `json:"messages"`

@@ -30,7 +30,7 @@ func (r *postgresMessageRepository) SaveMessages(ctx context.Context, sessionID 
 	return nil
 }
 
-func (r *postgresMessageRepository) GetMessages(ctx context.Context, sessionID string, limit, offset int) ([]model.Message, int64, error) {
+func (r *postgresMessageRepository) GetMessages(ctx context.Context, sessionID string, limit, offset int) (model.MessageQuery, error) {
 	rows, err := r.db.Pool().Query(ctx,
 		`SELECT id, role, content, input_token, output_token, created_at, COUNT(*) OVER() AS total
 		 FROM messages
@@ -40,23 +40,23 @@ func (r *postgresMessageRepository) GetMessages(ctx context.Context, sessionID s
 		sessionID, limit, offset,
 	)
 	if err != nil {
-		return nil, 0, err
+		return model.MessageQuery{}, err
 	}
 	defer rows.Close()
 
-	messages := make([]model.Message, 0, limit)
-	var total int64
+	var page model.MessageQuery
+	page.Messages = make([]model.Message, 0, limit)
 	for rows.Next() {
 		var msg model.Message
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &msg.InputToken, &msg.OutputToken, &msg.CreatedAt, &total); err != nil {
-			return nil, 0, err
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &msg.InputToken, &msg.OutputToken, &msg.CreatedAt, &page.Total); err != nil {
+			return model.MessageQuery{}, err
 		}
-		messages = append(messages, msg)
+		page.Messages = append(page.Messages, msg)
 	}
-	return messages, total, rows.Err()
+	return page, rows.Err()
 }
 
-func (r *postgresMessageRepository) GetRecentMessages(ctx context.Context, sessionID string, limit int) ([]model.Message, error) {
+func (r *postgresMessageRepository) GetRecentMessages(ctx context.Context, sessionID string, limit, offset int) ([]model.Message, error) {
 	rows, err := r.db.Pool().Query(ctx,
 		`SELECT id, role, content, input_token, output_token, created_at
 		 FROM (
@@ -64,10 +64,10 @@ func (r *postgresMessageRepository) GetRecentMessages(ctx context.Context, sessi
 		     FROM messages
 		     WHERE session_id = $1
 		     ORDER BY created_at DESC
-		     LIMIT $2
+		     LIMIT $2 OFFSET $3
 		 ) sub
 		 ORDER BY created_at ASC`,
-		sessionID, limit,
+		sessionID, limit, offset,
 	)
 	if err != nil {
 		return nil, err

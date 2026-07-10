@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/database"
 	"github.com/subipranuvem/desafio-chat-ia/internal/src/model"
 )
-
-// windowSize defines how many messages are kept per session in the sliding window cache.
-const windowSize = 20
 
 type redisMessageCache struct {
 	db  database.RedisDB
@@ -26,25 +24,30 @@ func sessionKey(sessionID string) string {
 	return "chat:session:" + sessionID
 }
 
+// PushMessages replaces the stored window atomically: DEL + RPush + Expire in a single transaction.
+// Callers are responsible for passing a pre-computed, token-bounded slice.
 func (c *redisMessageCache) PushMessages(ctx context.Context, sessionID string, messages []model.Message) error {
-	client := c.db.Client()
-	key := sessionKey(sessionID)
-
-	for _, msg := range messages {
+	serialized := make([]any, len(messages))
+	for i, msg := range messages {
 		data, err := json.Marshal(msg)
 		if err != nil {
 			return fmt.Errorf("marshal message: %w", err)
 		}
-		if err := client.RPush(ctx, key, data).Err(); err != nil {
-			return err
+		serialized[i] = data
+	}
+
+	client := c.db.Client()
+	key := sessionKey(sessionID)
+
+	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, key)
+		if len(serialized) > 0 {
+			pipe.RPush(ctx, key, serialized...)
 		}
-	}
-
-	if err := client.LTrim(ctx, key, -windowSize, -1).Err(); err != nil {
-		return err
-	}
-
-	return client.Expire(ctx, key, c.ttl).Err()
+		pipe.Expire(ctx, key, c.ttl)
+		return nil
+	})
+	return err
 }
 
 func (c *redisMessageCache) GetRecentMessages(ctx context.Context, sessionID string) ([]model.Message, error) {

@@ -96,26 +96,30 @@ func main() {
 	registry := llm.NewRegistry()
 
 	if cfg.GeminiAPIKey != "" {
-		gemini, err := llm.NewGeminiClient(ctx, cfg.GeminiAPIKey, "gemini-2.5-flash")
-		if err != nil {
-			slog.Error("failed to create gemini client", "error", err)
-			os.Exit(1)
-		}
 		for _, m := range []string{"gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"} {
-			registry.Register(m, gemini)
+			client, err := llm.NewGeminiClient(ctx, cfg.GeminiAPIKey, m)
+			if err != nil {
+				slog.Error("failed to create gemini client", "model", m, "error", err)
+				os.Exit(1)
+			}
+			registry.Register(m, client)
 			slog.Info("llm client registered", "model", m)
 		}
 	}
 
 	if cfg.DeepSeekAPIKey != "" {
-		deepseek, err := llm.NewOpenAIClient(cfg.DeepSeekAPIKey, "https://api.deepseek.com/v1", "deepseek-chat")
-		if err != nil {
-			slog.Error("failed to create deepseek client", "error", err)
-			os.Exit(1)
+		deepSeekModels := map[string]string{
+			"deepseek-v4-flash": "deepseek-v4-flash",
+			"deepseek-v4-pro":   "deepseek-v4-pro",
 		}
-		for _, m := range []string{"deepseek-v4-flash", "deepseek-v4-pro"} {
-			registry.Register(m, deepseek)
-			slog.Info("llm client registered", "model", m)
+		for alias, modelID := range deepSeekModels {
+			client, err := llm.NewOpenAIClient(cfg.DeepSeekAPIKey, "https://api.deepseek.com/v1", modelID)
+			if err != nil {
+				slog.Error("failed to create deepseek client", "model", modelID, "error", err)
+				os.Exit(1)
+			}
+			registry.Register(alias, client)
+			slog.Info("llm client registered", "model", alias)
 		}
 	}
 
@@ -124,10 +128,11 @@ func main() {
 	cache := repository.NewRedisMessageCache(rdb, sessionTTL)
 
 	srv := server.New(server.Config{
-		Addr:     ":8000",
-		Registry: registry,
-		Repo:     repo,
-		Cache:    cache,
+		Addr:                ":8000",
+		Registry:            registry,
+		Repo:                repo,
+		Cache:               cache,
+		ContextWindowTokens: cfg.ContextWindowTokens,
 	})
 
 	slog.Info("server listening", "addr", ":8000")

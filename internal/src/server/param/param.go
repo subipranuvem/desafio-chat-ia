@@ -8,5 +8,4 @@ const (
 
 	DefaultModel     = "gemini-2.5-flash"
 	DefaultMaxTokens = 4000
-	DefaultWindowSize = 20
 )

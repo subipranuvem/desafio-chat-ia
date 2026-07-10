@@ -12,6 +12,7 @@ type Config struct {
 	GeminiAPIKey                 string `env:"GEMINI_API_KEY"`
 	PingDatabaseIntervalInMillis int    `env:"PING_DATABASE_INTERVAL_IN_MILLIS" envDefault:"60000"`
 	RedisSessionTTLInMillis      int    `env:"REDIS_SESSION_TTL_IN_MILLIS" envDefault:"180000"`
+	ContextWindowTokens          int    `env:"CONTEXT_WINDOW_TOKENS" envDefault:"8000"`
 }
 
 func LoadConfig() (Config, error) {

@@ -14,10 +14,11 @@ import (
 )
 
 type Config struct {
-	Addr     string
-	Registry *llm.Registry
-	Repo     repository.MessageRepository
-	Cache    repository.MessageCache
+	Addr                string
+	Registry            *llm.Registry
+	Repo                repository.MessageRepository
+	Cache               repository.MessageCache
+	ContextWindowTokens int
 }
 
 func New(cfg Config) *http.Server {
@@ -28,7 +29,7 @@ func New(cfg Config) *http.Server {
 	r.Use(middleware.Gzip())
 	r.Use(middleware.ErrorHandler(middleware.DefaultErrors))
 
-	chat := handler.NewChatHandler(cfg.Registry, cfg.Repo, cfg.Cache)
+	chat := handler.NewChatHandler(cfg.Registry, cfg.Repo, cfg.Cache, cfg.ContextWindowTokens)
 
 	r.Route("/chat", func(r chi.Router) {
 		r.With(middleware.ValidateSchema(chat.Schema())).
