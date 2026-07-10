@@ -1,51 +1,59 @@
-# Desafio Técnico — API de Chat com IA
+# Technical Challenge — AI Chat API
 
-Resolução do desafio técnico de back-end da SubiPraNuvem. API de chat assistido por IA com histórico gerenciado via **Sliding Window**, entrega em tempo real por **SSE** e suporte a múltiplos provedores de LLM.
+Back-end challenge solution for SubiPraNuvem. AI-assisted chat API with history managed via **Sliding Window**, real-time delivery via **SSE**, and support for multiple LLM providers.
 
-## Como rodar
+## Running
 
-### Pré-requisitos
+### Prerequisites
 
 - Go 1.26+
-- Docker e Docker Compose
+- Docker and Docker Compose
 
-### 1. Configure as variáveis de ambiente
+### 1. Set up environment variables
 
 ```bash
 cp .env.example .env
-# Edite .env com suas API keys
+# Edit .env with your API keys
 ```
 
-### 2. Suba o PostgreSQL e Redis
+### 2. Start PostgreSQL and Redis
 
 ```bash
 docker compose up -d
 ```
 
-### 3. Execute a API
+### 3. Run the API
 
 ```bash
 go run main.go
 ```
 
-API disponível em `http://localhost:8000`.
+API available at `http://localhost:8000`.
 
-## Testes
+## Makefile targets
 
 ```bash
-go test ./...
+make run          # run locally
+make test         # run tests
+make test-race    # run tests with race detector
+make build        # build binary to bin/
+make docker-build # build Docker image
+make docker-run   # run Docker container (reads from .env)
+make gosec        # static security analysis
+make trivy        # filesystem vulnerability scan (via Docker)
+make sec-check    # run gosec + trivy
 ```
 
-## Variáveis de ambiente
+## Environment variables
 
-| Variável | Padrão | Descrição |
+| Variable | Default | Description |
 |---|---|---|
-| `POSTGRES_DSN` | — | Connection string do PostgreSQL (obrigatória) |
-| `REDIS_DSN` | — | Connection string do Redis (obrigatória) |
-| `GEMINI_API_KEY` | — | API key do Google Gemini |
-| `DEEPSEEK_API_KEY` | — | API key do DeepSeek |
-| `PING_DATABASE_INTERVAL_IN_MILLIS` | `60000` | Intervalo entre health checks de Postgres e Redis |
-| `REDIS_SESSION_TTL_IN_MILLIS` | `7200000` | TTL das sessões no Redis; renovado a cada mensagem enviada |
-| `CONTEXT_WINDOW_TOKENS` | `8000` | Tamanho máximo da janela de contexto enviada ao LLM (em tokens) |
+| `POSTGRES_DSN` | — | PostgreSQL connection string (required) |
+| `REDIS_DSN` | — | Redis connection string (required) |
+| `GEMINI_API_KEY` | — | Google Gemini API key |
+| `DEEPSEEK_API_KEY` | — | DeepSeek API key |
+| `PING_DATABASE_INTERVAL_IN_MILLIS` | `60000` | Interval between Postgres and Redis health checks (ms) |
+| `REDIS_SESSION_TTL_IN_MILLIS` | `7200000` | Session TTL in Redis; refreshed on every message (ms) |
+| `CONTEXT_WINDOW_TOKENS` | `8000` | Maximum context window sent to the LLM (in tokens) |
 
-Pelo menos uma API key de LLM deve estar configurada para o servidor processar mensagens.
+At least one LLM API key must be set for the server to process messages.
