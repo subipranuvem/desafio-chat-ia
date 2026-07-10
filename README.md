@@ -2,51 +2,6 @@
 
 Resolução do desafio técnico de back-end da SubiPraNuvem. API de chat assistido por IA com histórico gerenciado via **Sliding Window**, entrega em tempo real por **SSE** e suporte a múltiplos provedores de LLM.
 
-## Stack
-
-| Camada | Tecnologia |
-|---|---|
-| Linguagem | Go 1.26 |
-| HTTP | Chi v5 |
-| LLMs | Google Gemini · DeepSeek (via API OpenAI-compatível) |
-| Banco relacional | PostgreSQL |
-| Cache / sessão | Redis |
-| Containerização | Docker · Docker Compose |
-
-
-## Endpoints
-
-| Método | Rota | Descrição |
-|---|---|---|
-| `POST` | `/chat/session/{session-id}` | Envia mensagem, retorna resposta em SSE |
-| `GET` | `/chat/session/{session-id}` | Histórico paginado da sessão (PostgreSQL) |
-| `GET` | `/chat/models` | Lista modelos disponíveis |
-
-### POST `/chat/session/{session-id}`
-
-```json
-{
-  "message": "Olá!",
-  "model": "gemini-2.5-flash",
-  "system_prompt": "Você é um assistente técnico.",
-  "max_tokens": 4000
-}
-```
-
-Resposta em SSE:
-
-```
-data: {"event": "chunk", "text": "Olá"}
-data: {"event": "chunk", "text": "! Como posso ajudar?"}
-data: {"event": "done", "metadata": {"tokens_used": 18, "model": "gemini-2.5-flash"}}
-```
-
-Erros retornam JSON (não SSE):
-
-```json
-{"status_code": 429, "message": "LLM API rate limit exceeded. Try again later.", "error": "..."}
-```
-
 ## Como rodar
 
 ### Pré-requisitos
@@ -90,6 +45,7 @@ go test ./...
 | `GEMINI_API_KEY` | — | API key do Google Gemini |
 | `DEEPSEEK_API_KEY` | — | API key do DeepSeek |
 | `PING_DATABASE_INTERVAL_IN_MILLIS` | `60000` | Intervalo entre health checks de Postgres e Redis |
-| `REDIS_SESSION_TTL_IN_MILLIS` | `180000` | TTL das sessões no Redis; renovado a cada mensagem enviada |
+| `REDIS_SESSION_TTL_IN_MILLIS` | `7200000` | TTL das sessões no Redis; renovado a cada mensagem enviada |
+| `CONTEXT_WINDOW_TOKENS` | `8000` | Tamanho máximo da janela de contexto enviada ao LLM (em tokens) |
 
 Pelo menos uma API key de LLM deve estar configurada para o servidor processar mensagens.
