@@ -27,6 +27,7 @@ func RunMigrations(pool *pgxpool.Pool, migrationsFS fs.FS) error {
 	if err != nil {
 		return err
 	}
+	defer m.Close()
 
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return err
